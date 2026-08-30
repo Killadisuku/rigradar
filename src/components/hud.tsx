@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 
 export function Hud() {
   return (
-    <div className="pointer-events-none absolute inset-0 z-20">
+    <div className="rr-hud">
       <TopChrome />
       <AlertBanner />
       <SpeedBubble />
@@ -56,7 +56,7 @@ function TopChrome() {
 
   if (nav.active && ins) {
     return (
-      <div className="pointer-events-auto absolute inset-x-3 top-3 md:inset-x-4 md:top-4">
+      <div className="pointer-events-auto absolute inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] md:inset-x-4 md:top-4">
         <div className="rr-banner flex items-stretch overflow-hidden rounded-2xl bg-card shadow-border">
           <div className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3">
             <p className="font-display text-3xl leading-none font-semibold tracking-tight">{ins.primary}</p>
@@ -92,7 +92,7 @@ function TopChrome() {
   }
 
   return (
-    <div className="pointer-events-auto absolute inset-x-3 top-3 flex items-center gap-2 md:inset-x-4 md:top-4">
+    <div className="pointer-events-auto absolute inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] flex items-center gap-2 md:inset-x-4 md:top-4">
       <button
         type="button"
         onClick={() => setOverlay(overlay === "search" ? "none" : "search")}
@@ -217,7 +217,7 @@ function Dock() {
 
   if (nav.arrived && dest) {
     return (
-      <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-3 md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
+      <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
         <div className="rounded-3xl bg-card px-5 py-4 shadow-dock">
           <p className="font-display text-2xl font-semibold">Arrived</p>
           <p className="mt-1 text-sm text-muted-foreground">{dest.name}</p>
@@ -241,7 +241,7 @@ function Dock() {
     const legal = route.restrictions.every((r) => r.avoided || r.type !== "low_bridge");
 
     return (
-      <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-3 md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
+      <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
         <div className="rounded-3xl bg-card px-5 pt-4 pb-4 shadow-dock">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -303,7 +303,7 @@ function Dock() {
   }
 
   return (
-    <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-3 md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
+    <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
       <div className="rounded-3xl bg-card px-5 pt-4 pb-4 shadow-dock">
         <div className="flex items-center gap-3">
           <Logo className="size-9" />

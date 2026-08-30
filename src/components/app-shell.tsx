@@ -49,7 +49,9 @@ export function AppShell() {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-background">
-      <MapCanvas />
+      <div className="rr-map">
+        <MapCanvas />
+      </div>
       <p className="pointer-events-none absolute bottom-36 left-3 z-10 text-xs text-muted-foreground md:bottom-4">
         © OpenStreetMap
       </p>

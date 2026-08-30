@@ -24,7 +24,7 @@ export function SlidePanel({
         type="button"
         aria-label="Close panel"
         tabIndex={open ? 0 : -1}
-        className={cn("rr-scrim fixed inset-0 z-30 bg-background/55", open && "is-open")}
+        className={cn("rr-scrim fixed inset-0 z-40 bg-background/55", open && "is-open")}
         onClick={onClose}
       />
       <section
@@ -34,7 +34,7 @@ export function SlidePanel({
         aria-hidden={!open}
         inert={!open}
         className={cn(
-          "rr-panel fixed inset-x-0 bottom-0 z-40 flex max-h-[min(82vh,44rem)] flex-col bg-card shadow-dock",
+          "rr-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[min(82vh,44rem)] flex-col bg-card shadow-dock",
           "rounded-t-3xl md:inset-y-4 md:left-4 md:right-auto md:w-[400px] md:rounded-3xl md:shadow-border",
           open && "is-open",
         )}
