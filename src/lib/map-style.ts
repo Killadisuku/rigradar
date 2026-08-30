@@ -1,12 +1,11 @@
 import type { Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 
-const LIBERTY = "https://tiles.openfreemap.org/styles/liberty";
+const BRIGHT = "https://tiles.openfreemap.org/styles/bright";
 const DARK = "https://tiles.openfreemap.org/styles/dark";
 
 /**
  * English / Latin script only.
- * OpenFreeMap's default concatenates name:latin + name:nonlatin, which paints
- * Arabic street names across the Gulf. Never fall back to `name`.
+ * OpenFreeMap concatenates latin + Arabic in the Gulf. Never fall back to `name`.
  */
 const ENGLISH_NAME = [
   "coalesce",
@@ -25,6 +24,10 @@ type LooseLayer = {
 
 type LooseStyle = {
   layers?: LooseLayer[];
+  center?: unknown;
+  zoom?: unknown;
+  bearing?: unknown;
+  pitch?: unknown;
   [key: string]: unknown;
 };
 
@@ -45,11 +48,12 @@ function preferEnglish(style: LooseStyle): StyleSpecification {
     if (!isPlaceLabel(field)) return layer;
     return { ...layer, layout: { ...layer.layout, "text-field": ENGLISH_NAME } };
   });
-  return { ...style, layers } as StyleSpecification;
+  const { center: _c, zoom: _z, bearing: _b, pitch: _p, ...rest } = style;
+  return { ...rest, layers } as StyleSpecification;
 }
 
 export async function loadEnglishBasemap(night: boolean): Promise<StyleSpecification> {
-  const url = night ? DARK : LIBERTY;
+  const url = night ? DARK : BRIGHT;
   const hit = cache.get(url);
   if (hit) return hit;
   const res = await fetch(url);

@@ -10,7 +10,7 @@ import {
 } from "@/lib/store";
 import { pointAlong } from "@/lib/geo";
 
-const FALLBACK = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 
 type LNS = typeof import("leaflet");
 
@@ -90,6 +90,10 @@ export function MapCanvas() {
     let tilesReady = false;
 
     void (async () => {
+      const maplibre = await import("maplibre-gl");
+      const workerUrl = (await import("maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url")).default;
+      maplibre.setWorkerUrl(workerUrl);
+
       const [{ default: leafletMod }, glMod] = await Promise.all([
         import("leaflet"),
         import("@maplibre/maplibre-gl-leaflet"),
@@ -112,12 +116,13 @@ export function MapCanvas() {
         zoomControl: false,
         attributionControl: false,
         center: [start.lat, start.lng],
-        zoom: 12,
+        zoom: 15,
         minZoom: 2,
         maxZoom: 18,
         zoomSnap: 0.5,
       });
       rootRef.current.classList.toggle("is-night", useApp.getState().nightMap);
+      map.invalidateSize();
 
       let glLayer: ReturnType<typeof maplibreGL> | null = null;
       const paintEnglish = (layer: NonNullable<typeof glLayer>) => {
@@ -136,9 +141,16 @@ export function MapCanvas() {
           attributionControl: false,
         }).addTo(map);
         paintEnglish(glLayer);
+        const syncGl = () => {
+          map?.invalidateSize();
+          glLayer?.getMaplibreMap().resize();
+        };
+        syncGl();
+        window.setTimeout(syncGl, 120);
+        window.setTimeout(syncGl, 400);
       } catch {
         if (cancelled || !map) return;
-        L.tileLayer(FALLBACK, { maxZoom: 16, maxNativeZoom: 16 }).addTo(map);
+        L.tileLayer(OSM, { maxZoom: 19, maxNativeZoom: 19 }).addTo(map);
       }
       tilesReady = true;
 
@@ -218,7 +230,8 @@ export function MapCanvas() {
               if (!map) return;
               quietMove = true;
               map.invalidateSize();
-              map.setView([s.origin.lat, s.origin.lng], Math.max(map.getZoom(), 13), { animate: false });
+              map.setView([s.origin.lat, s.origin.lng], Math.max(map.getZoom(), 15), { animate: false });
+              glLayer?.getMaplibreMap().resize();
               quietMove = false;
             };
             recenter();
