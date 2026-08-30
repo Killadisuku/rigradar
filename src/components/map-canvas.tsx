@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Circle, LayerGroup, Map as LeafletMap, Marker, Polyline, TileLayer } from "leaflet";
 import { FACILITIES, REPORT_META } from "@/lib/data";
-import { slicePath } from "@/lib/geo";
+import { haversine, slicePath } from "@/lib/geo";
 import {
   getReports,
   resolveRoute,
@@ -109,7 +109,7 @@ export function MapCanvas() {
         attributionControl: false,
         center: [start.lat, start.lng],
         zoom: 12,
-        minZoom: 5,
+        minZoom: 2,
         maxZoom: 18,
         zoomSnap: 0.5,
       });
@@ -168,12 +168,13 @@ export function MapCanvas() {
       }).addTo(map);
 
       const convoyMarkers = new Map<string, Marker>();
+      let quietMove = false;
 
       map.on("dragstart", () => {
-        useApp.getState().setFollow(false);
+        if (!quietMove) useApp.getState().setFollow(false);
       });
 
-      let lastOriginKey = `${start.lat.toFixed(4)},${start.lng.toFixed(4)}`;
+      let lastOriginKey = `${start.lat.toFixed(3)},${start.lng.toFixed(3)}`;
       let lastRouteKey = "";
       let lastPoiKey = "";
       let lastReportKey = "";
@@ -184,17 +185,20 @@ export function MapCanvas() {
 
         map.getContainer().classList.toggle("is-night", s.nightMap);
 
-        const originKey = `${s.origin.lat.toFixed(4)},${s.origin.lng.toFixed(4)}`;
+        const originKey = `${s.origin.lat.toFixed(3)},${s.origin.lng.toFixed(3)}`;
         if (originKey !== lastOriginKey) {
           lastOriginKey = originKey;
-          const recenter = () => {
-            if (!map) return;
-            map.invalidateSize();
-            map.setView([s.origin.lat, s.origin.lng], 13, { animate: false });
-          };
-          recenter();
-          window.setTimeout(recenter, 80);
-          window.setTimeout(recenter, 420);
+          if (!s.nav.preview && !s.nav.active) {
+            const recenter = () => {
+              if (!map) return;
+              quietMove = true;
+              map.invalidateSize();
+              map.setView([s.origin.lat, s.origin.lng], Math.max(map.getZoom(), 13), { animate: false });
+              quietMove = false;
+            };
+            recenter();
+            window.setTimeout(recenter, 80);
+          }
         }
 
         const route = resolveRoute(s.nav.routeId);
@@ -239,23 +243,34 @@ export function MapCanvas() {
           traveledLine.setLatLngs(done.map((p) => [p.lat, p.lng] as [number, number]));
         }
 
-        const pos = route
-          ? pointAlong(route.polyline, s.nav.traveledMi)
-          : { pos: s.origin, heading: 175 };
+        const pos = s.gps
+          ? { pos: s.gps.coord, heading: s.gps.heading >= 0 ? s.gps.heading : 0 }
+          : route && (s.nav.active || s.nav.arrived)
+            ? pointAlong(route.polyline, s.nav.traveledMi)
+            : { pos: s.origin, heading: 175 };
         truck.setLatLng([pos.pos.lat, pos.pos.lng]);
         const rot = truck.getElement()?.querySelector(".rig-marker-rot") as HTMLElement | null;
         if (rot) rot.style.transform = `rotate(${pos.heading}deg)`;
         accuracy.setLatLng([pos.pos.lat, pos.pos.lng]);
+        accuracy.setRadius(Math.max(18, Math.min(240, s.gps?.accuracyM ?? 40)));
 
-        if (s.nav.follow && (s.nav.active || s.nav.arrived)) {
-          map.setView([pos.pos.lat, pos.pos.lng], Math.max(map.getZoom(), 12), { animate: false });
+        if (s.nav.follow && !s.nav.preview) {
+          const z = Math.max(map.getZoom(), s.gps ? 14 : 12);
+          quietMove = true;
+          map.setView([pos.pos.lat, pos.pos.lng], z, { animate: false });
+          quietMove = false;
         }
 
-        const poiKey = `${s.layers.stops}:${s.layers.rest}:${s.layers.scales}:${s.selectedFacilityId}:${originKey}`;
+        const poiKey = `${s.layers.stops}:${s.layers.rest}:${s.layers.scales}:${s.selectedFacilityId}:${originKey}:${s.extraFacilities.length}`;
         if (poiKey !== lastPoiKey) {
           lastPoiKey = poiKey;
           poiGroup.clearLayers();
-          for (const f of FACILITIES) {
+          const pois = [...s.extraFacilities, ...FACILITIES];
+          const seen = new Set<string>();
+          for (const f of pois) {
+            if (seen.has(f.id)) continue;
+            seen.add(f.id);
+            if (haversine(s.origin, f.coord) > 45) continue;
             if (f.type === "truck_stop" && !s.layers.stops) continue;
             if (f.type === "rest_area" && !s.layers.rest) continue;
             if (f.type === "weigh_station" && !s.layers.scales) continue;
@@ -270,12 +285,13 @@ export function MapCanvas() {
         }
 
         const reports = getReports();
-        const reportKey = `${s.layers.reports}:${reports.length}:${reports[0]?.id ?? ""}`;
+        const reportKey = `${s.layers.reports}:${reports.length}:${reports[0]?.id ?? ""}:${originKey}`;
         if (reportKey !== lastReportKey) {
           lastReportKey = reportKey;
           reportGroup.clearLayers();
           if (s.layers.reports) {
             for (const r of reports) {
+              if (haversine(s.origin, r.coord) > 45) continue;
               const m = L.marker([r.coord.lat, r.coord.lng], {
                 icon: reportIcon(L, r.kind),
                 keyboard: false,

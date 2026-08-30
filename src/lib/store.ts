@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 import type {
   ConvoyTruck,
   Facility,
+  GpsFix,
+  GpsStatus,
   HosState,
   Layers,
   NavState,
@@ -25,10 +27,11 @@ import {
   SEED_REPORTS,
   placeById,
   routeById as cannedRouteById,
+  facilityById,
 } from "./data";
-import { distToPath, haversine, offset, pointAlong, trafficAt } from "./geo";
+import { distToPath, haversine, offset, pointAlong, snapToPath, trafficAt } from "./geo";
 import { formatMi } from "./format";
-import { fetchDrivingRoute } from "./routing";
+import { fetchTruckRoute } from "./routing";
 import { resetVoice, speak } from "./voice";
 
 const DEFAULT_PROFILE: TruckProfile = {
@@ -70,6 +73,7 @@ const DEFAULT_NAV: NavState = {
 const HOME_LABEL = `${ORIGIN_LABEL} · ${ORIGIN_CITY}`;
 
 let convoyClock = 0;
+let lastRerouteAt = 0;
 
 function seedConvoy(origin = ORIGIN): ConvoyTruck[] {
   const hubs = [
@@ -115,8 +119,11 @@ type AppState = {
   extraReports: Report[];
   extraPlaces: Place[];
   extraRoutes: Record<string, Route>;
+  extraFacilities: Facility[];
   origin: { lat: number; lng: number };
   originLabel: string;
+  gps: GpsFix | null;
+  gpsStatus: GpsStatus;
   hos: HosState;
   nav: NavState;
   convoy: ConvoyTruck[];
@@ -133,6 +140,10 @@ type AppState = {
   previewDestination: (placeId: string) => void;
   goToPlace: (place: Place) => void;
   relocate: (coord: { lat: number; lng: number }, label: string) => void;
+  applyGpsFix: (fix: GpsFix) => void;
+  setGpsStatus: (s: GpsStatus) => void;
+  setOriginLabel: (label: string) => void;
+  setExtraFacilities: (list: Facility[]) => void;
   startNav: () => void;
   stopNav: () => void;
   tick: (dtSec: number) => void;
@@ -156,8 +167,11 @@ export const useApp = create<AppState>()(
       extraReports: [],
       extraPlaces: [],
       extraRoutes: {},
+      extraFacilities: [],
       origin: ORIGIN,
       originLabel: HOME_LABEL,
+      gps: null,
+      gpsStatus: "off",
       hos: { ...DEFAULT_HOS },
       nav: { ...DEFAULT_NAV },
       convoy: seedConvoy(ORIGIN),
@@ -182,10 +196,77 @@ export const useApp = create<AppState>()(
           origin: coord,
           originLabel: label,
           convoy: seedConvoy(coord),
-          nav: { ...DEFAULT_NAV },
+          nav: { ...DEFAULT_NAV, follow: true },
           selectedFacilityId: null,
         });
       },
+
+      applyGpsFix: (fix) => {
+        const s = get();
+        const jumped = haversine(s.origin, fix.coord) > 25;
+        const heading = fix.speedMph > 1.5 && fix.heading >= 0 ? fix.heading : (s.gps?.heading ?? fix.heading);
+        const gps = { ...fix, heading };
+        let nav = s.nav;
+        let extraRoutes = s.extraRoutes;
+        let alert = s.alert;
+        let alertKey = s.alertKey;
+
+        if (nav.active && nav.routeId) {
+          const route = lookupRoute(nav.routeId, extraRoutes);
+          if (route) {
+            const snap = snapToPath(fix.coord, route.polyline);
+            if (snap.distMi <= 0.4) {
+              const traveledMi = snap.traveledMi;
+              if (traveledMi >= route.distanceMi - 0.1) {
+                speak("You have arrived.", s.voiceOn);
+                nav = { ...nav, active: false, arrived: true, traveledMi: route.distanceMi, speedMph: 0, follow: true };
+                alert = "Arrived. Nearby truck parking is pinned on the map.";
+                alertKey = "arrived";
+              } else {
+                nav = { ...nav, traveledMi, speedMph: fix.speedMph, follow: nav.follow };
+              }
+            } else {
+              nav = { ...nav, speedMph: fix.speedMph };
+              const dest = s.extraPlaces.find((p) => p.id === nav.destId) ?? placeById(nav.destId ?? "");
+              if (dest && Date.now() - lastRerouteAt > 14000) {
+                lastRerouteAt = Date.now();
+                void fetchTruckRoute(fix.coord, dest, s.profile).then((route) => {
+                  if (!route) return;
+                  const cur = get();
+                  if (!cur.nav.active || cur.nav.destId !== dest.id) return;
+                  resetVoice();
+                  set({
+                    extraRoutes: { ...cur.extraRoutes, [route.id]: route },
+                    nav: { ...cur.nav, routeId: route.id, traveledMi: 0, speedMph: cur.gps?.speedMph ?? 0 },
+                    alert: "Rerouting on truck-legal roads.",
+                    alertKey: `re-${route.id}`,
+                  });
+                  speak("Rerouting.", cur.voiceOn);
+                });
+              }
+            }
+          }
+        } else if (!nav.active) {
+          nav = { ...nav, speedMph: fix.speedMph };
+        }
+
+        set({
+          gps,
+          gpsStatus: "live",
+          origin: fix.coord,
+          convoy: jumped ? seedConvoy(fix.coord) : s.convoy,
+          nav,
+          extraRoutes,
+          alert,
+          alertKey,
+          seenOnboard: true,
+          overlay: s.overlay === "onboard" ? "none" : s.overlay,
+        });
+      },
+
+      setGpsStatus: (gpsStatus) => set({ gpsStatus }),
+      setOriginLabel: (originLabel) => set({ originLabel }),
+      setExtraFacilities: (extraFacilities) => set({ extraFacilities }),
 
       previewDestination: (placeId) => {
         const routeId = ROUTE_BY_DEST[placeId];
@@ -208,47 +289,21 @@ export const useApp = create<AppState>()(
       },
 
       goToPlace: (place) => {
-        const canned = ROUTE_BY_DEST[place.id];
-        if (canned) {
-          get().previewDestination(place.id);
-          return;
-        }
-        const origin = get().origin;
-        const miles = haversine(origin, place.coord);
-        const extraPlaces = [
-          place,
-          ...get().extraPlaces.filter((p) => p.id !== place.id),
-        ].slice(0, 40);
-
-        if (miles > 280) {
-          resetVoice();
-          set({
-            origin: place.coord,
-            originLabel: place.name,
-            convoy: seedConvoy(place.coord),
-            extraPlaces,
-            overlay: "none",
-            selectedFacilityId: null,
-            nav: { ...DEFAULT_NAV },
-            alert: `Cab is now in ${place.name}. Search a nearby destination to run the roads.`,
-            alertKey: `reloc-${place.id}`,
-          });
-          speak(`Now in ${place.name}.`, get().voiceOn);
-          return;
-        }
-
+        const origin = get().gps?.coord ?? get().origin;
+        const extraPlaces = [place, ...get().extraPlaces.filter((p) => p.id !== place.id)].slice(0, 40);
         set({
           extraPlaces,
           overlay: "none",
-          alert: `Plotting route to ${place.name}…`,
+          alert: `Plotting a truck route to ${place.name}…`,
           alertKey: `plot-${place.id}`,
         });
-        void fetchDrivingRoute(origin, place)
+        void fetchTruckRoute(origin, place, get().profile)
           .then((route) => {
             if (!route) throw new Error("no route");
             resetVoice();
             set({
               extraRoutes: { ...get().extraRoutes, [route.id]: route },
+              extraPlaces,
               alert: null,
               alertKey: null,
               selectedFacilityId: null,
@@ -266,27 +321,29 @@ export const useApp = create<AppState>()(
             get().relocate(place.coord, place.name);
             set({
               overlay: "none",
-              alert: `No through-route from here. Moved you to ${place.name}.`,
+              extraPlaces,
+              alert: `No truck route from here. Cab is now in ${place.name}.`,
               alertKey: `reloc-${place.id}`,
             });
           });
       },
 
       startNav: () => {
-        const { nav, voiceOn, extraRoutes } = get();
+        const { nav, voiceOn, extraRoutes, gps } = get();
         if (!nav.routeId) return;
         const route = lookupRoute(nav.routeId, extraRoutes);
         if (!route) return;
         resetVoice();
         const first = route.instructions[0];
+        const snap = gps ? snapToPath(gps.coord, route.polyline) : null;
         set({
           overlay: "none",
           nav: {
             ...nav,
             active: true,
             preview: false,
-            traveledMi: 0,
-            speedMph: 58,
+            traveledMi: snap && snap.distMi < 0.5 ? snap.traveledMi : 0,
+            speedMph: gps?.speedMph ?? 0,
             follow: true,
             arrived: false,
           },
@@ -304,7 +361,7 @@ export const useApp = create<AppState>()(
       },
 
       tick: (dtSec) => {
-        const { nav, hos, convoy, voiceOn, layers, profile, extraRoutes } = get();
+        const { nav, hos, convoy, voiceOn, layers, profile, extraRoutes, gps } = get();
         convoyClock += dtSec;
         const pulseConvoy = convoyClock >= 0.2;
         if (pulseConvoy) convoyClock = 0;
@@ -326,28 +383,38 @@ export const useApp = create<AppState>()(
               })
             : convoy;
 
-        if (!nav.active || !nav.routeId) {
+        const gpsLive = Boolean(gps && Date.now() - gps.at < 8000);
+        const driving = gpsLive ? (gps?.speedMph ?? 0) > 4 : nav.active;
+
+        if (!nav.active && !driving) {
           if (pulseConvoy && layers.convoy) set({ convoy: nextConvoy });
           return;
         }
-        const route = lookupRoute(nav.routeId, extraRoutes);
-        if (!route) return;
+        const route = nav.routeId ? lookupRoute(nav.routeId, extraRoutes) : undefined;
+        if (nav.active && !route) return;
 
-        const level = trafficAt(route.traffic, nav.traveledMi);
-        const target =
-          level === "heavy" ? 34 : level === "moderate" ? 52 : level === "light" ? 60 : 66;
-        const speedMph = nav.speedMph + (target - nav.speedMph) * 0.12;
-        const step = (speedMph / 3600) * dtSec;
-        const traveledMi = nav.traveledMi + step;
+        let speedMph = nav.speedMph;
+        let traveledMi = nav.traveledMi;
+        if (gpsLive) {
+          speedMph = gps?.speedMph ?? 0;
+        } else if (nav.active && route) {
+          const level = trafficAt(route.traffic, nav.traveledMi);
+          const target =
+            level === "heavy" ? 34 : level === "moderate" ? 52 : level === "light" ? 60 : 66;
+          speedMph = nav.speedMph + (target - nav.speedMph) * 0.12;
+          traveledMi = nav.traveledMi + (speedMph / 3600) * dtSec;
+        }
 
-        const nextHos: HosState = {
-          driveSec: Math.max(0, hos.driveSec - dtSec),
-          breakInSec: Math.max(0, hos.breakInSec - dtSec),
-          dutySec: Math.max(0, hos.dutySec - dtSec),
-          cycleSec: Math.max(0, hos.cycleSec - dtSec),
-        };
+        const nextHos: HosState = driving
+          ? {
+              driveSec: Math.max(0, hos.driveSec - dtSec),
+              breakInSec: Math.max(0, hos.breakInSec - dtSec),
+              dutySec: Math.max(0, hos.dutySec - dtSec),
+              cycleSec: Math.max(0, hos.cycleSec - dtSec),
+            }
+          : hos;
 
-        if (traveledMi >= route.distanceMi - 0.08) {
+        if (nav.active && route && !gpsLive && traveledMi >= route.distanceMi - 0.08) {
           speak("You have arrived.", voiceOn);
           set({
             convoy: nextConvoy,
@@ -368,7 +435,7 @@ export const useApp = create<AppState>()(
           if (voice) speak(voice, voiceOn);
         };
 
-        for (const r of route.restrictions) {
+        for (const r of route?.restrictions ?? []) {
           const ahead = r.atMi - traveledMi;
           if (ahead > 0.15 && ahead < 3.2) {
             if (r.type === "weigh_open") {
@@ -392,7 +459,7 @@ export const useApp = create<AppState>()(
         }
 
         const reports = getReports();
-        if (layers.reports) {
+        if (layers.reports && route) {
           for (const rp of reports) {
             const d = haversine(pointAlong(route.polyline, traveledMi).pos, rp.coord);
             if (d < 2.4) {
@@ -402,16 +469,18 @@ export const useApp = create<AppState>()(
           }
         }
 
-        const ins = currentInstruction(route, traveledMi);
-        const nextIns = nextInstruction(route, traveledMi);
-        if (nextIns) {
-          const d = nextIns.atMi - traveledMi;
-          if (d < 1.6 && d > 0.2) {
-            speak(`${nextIns.primary}. ${nextIns.secondary}.`, voiceOn);
+        if (route) {
+          const ins = currentInstruction(route, traveledMi);
+          const nextIns = nextInstruction(route, traveledMi);
+          if (nextIns) {
+            const d = nextIns.atMi - traveledMi;
+            if (d < 1.6 && d > 0.2) {
+              speak(`${nextIns.primary}. ${nextIns.secondary}.`, voiceOn);
+            }
+          } else if (ins && traveledMi > 0.4) {
+            const remain = route.distanceMi - traveledMi;
+            if (remain < 1.2) speak("Approaching destination.", voiceOn);
           }
-        } else if (ins && traveledMi > 0.4) {
-          const remain = route.distanceMi - traveledMi;
-          if (remain < 1.2) speak("Approaching destination.", voiceOn);
         }
 
         set({
@@ -482,10 +551,19 @@ export const useApp = create<AppState>()(
         nightMap: s.nightMap,
         seenOnboard: s.seenOnboard,
         extraReports: s.extraReports,
+        extraFacilities: s.extraFacilities,
         hos: s.hos,
         origin: s.origin,
         originLabel: s.originLabel,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AppState>;
+        return {
+          ...current,
+          ...p,
+          seenOnboard: Boolean(current.seenOnboard || p.seenOnboard),
+        };
+      },
     },
   ),
 );
@@ -516,8 +594,16 @@ export function resolvePlace(id: string | null): Place | undefined {
   return useApp.getState().extraPlaces.find((p) => p.id === id) ?? placeById(id);
 }
 
+export function resolveFacility(id: string | null): Facility | undefined {
+  if (!id) return undefined;
+  return useApp.getState().extraFacilities.find((f) => f.id === id) ?? facilityById(id);
+}
+
 export function getPosition(): { coord: ReturnType<typeof pointAlong>["pos"]; heading: number; highway: string } {
-  const { nav, origin, extraRoutes, originLabel } = useApp.getState();
+  const { nav, origin, extraRoutes, originLabel, gps } = useApp.getState();
+  if (gps && Date.now() - gps.at < 15000) {
+    return { coord: gps.coord, heading: gps.heading >= 0 ? gps.heading : 0, highway: originLabel };
+  }
   if (nav.routeId) {
     const route = lookupRoute(nav.routeId, extraRoutes);
     if (route) {
@@ -535,9 +621,17 @@ export function remainingMin(route: Route, traveledMi: number, speedMph: number)
   return (left / mph) * 60;
 }
 
+export function allFacilities(): Facility[] {
+  const extra = useApp.getState().extraFacilities;
+  if (extra.length === 0) return FACILITIES;
+  const ids = new Set(extra.map((f) => f.id));
+  return [...extra, ...FACILITIES.filter((f) => !ids.has(f.id))];
+}
+
 export function nearbyFacilities(coord: { lat: number; lng: number }, limit = 8): (Facility & { distanceMi: number })[] {
-  return FACILITIES.map((f) => ({ ...f, distanceMi: haversine(coord, f.coord) }))
-    .filter((f) => f.distanceMi < 280)
+  return allFacilities()
+    .map((f) => ({ ...f, distanceMi: haversine(coord, f.coord) }))
+    .filter((f) => f.distanceMi < 40)
     .sort((a, b) => a.distanceMi - b.distanceMi)
     .slice(0, limit);
 }
@@ -547,18 +641,23 @@ export function reportsOnRoute(route: Route): Report[] {
 }
 
 export function cheapestDieselNear(coord: { lat: number; lng: number }) {
-  const withFuel = FACILITIES.filter((f) => f.diesel != null).map((f) => ({
-    ...f,
-    distanceMi: haversine(coord, f.coord),
-  }));
+  const withFuel = allFacilities()
+    .filter((f) => f.diesel != null)
+    .map((f) => ({
+      ...f,
+      distanceMi: haversine(coord, f.coord),
+    }))
+    .filter((f) => f.distanceMi < 80);
   withFuel.sort((a, b) => (a.diesel ?? 99) - (b.diesel ?? 99));
   return withFuel[0] ?? null;
 }
 
 export function searchPlaces(q: string): Place[] {
+  const origin = useApp.getState().origin;
+  const local = PLACES.filter((p) => haversine(origin, p.coord) < 250);
   const s = q.trim().toLowerCase();
-  if (!s) return PLACES;
-  return PLACES.filter(
+  if (!s) return local;
+  return local.filter(
     (p) =>
       p.name.toLowerCase().includes(s) ||
       p.subtitle.toLowerCase().includes(s) ||
@@ -567,9 +666,11 @@ export function searchPlaces(q: string): Place[] {
 }
 
 export function searchFacilities(q: string): Facility[] {
+  const origin = useApp.getState().origin;
+  const local = allFacilities().filter((f) => haversine(origin, f.coord) < 40);
   const s = q.trim().toLowerCase();
-  if (!s) return FACILITIES;
-  return FACILITIES.filter(
+  if (!s) return local;
+  return local.filter(
     (f) =>
       f.name.toLowerCase().includes(s) ||
       f.subtitle.toLowerCase().includes(s) ||

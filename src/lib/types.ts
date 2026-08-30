@@ -1,5 +1,16 @@
 export type LatLng = { lat: number; lng: number };
 
+export type GpsStatus = "off" | "pending" | "live" | "denied";
+
+export type GpsFix = {
+  coord: LatLng;
+  heading: number;
+  speedMph: number;
+  accuracyM: number;
+  at: number;
+};
+
+
 export type TruckClass = "semi" | "box" | "flatbed" | "tanker" | "reefer";
 
 export type TruckProfile = {

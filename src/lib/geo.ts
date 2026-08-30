@@ -77,13 +77,51 @@ export function pointAlong(points: LatLng[], traveledMi: number): PathIndex {
   return { pos: last, heading: heading(prev, last), next: last };
 }
 
-export function distToPath(point: LatLng, points: LatLng[]): number {
-  let min = Infinity;
-  for (const p of points) {
-    const d = haversine(point, p);
-    if (d < min) min = d;
+export function snapToPath(point: LatLng, points: LatLng[]): {
+  traveledMi: number;
+  distMi: number;
+  heading: number;
+  pos: LatLng;
+} {
+  if (points.length === 0) {
+    return { traveledMi: 0, distMi: Infinity, heading: 0, pos: point };
   }
-  return min;
+  if (points.length === 1) {
+    return { traveledMi: 0, distMi: haversine(point, points[0]!), heading: 0, pos: points[0]! };
+  }
+  let best = { traveledMi: 0, distMi: Infinity, heading: 0, pos: points[0]! };
+  let acc = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    const seg = haversine(a, b);
+    const t = clamp01(projectT(point, a, b));
+    const pos = lerpLngLat(a, b, t);
+    const d = haversine(point, pos);
+    if (d < best.distMi) {
+      best = { traveledMi: acc + t * seg, distMi: d, heading: heading(a, b), pos };
+    }
+    acc += seg;
+  }
+  return best;
+}
+
+function clamp01(t: number) {
+  return Math.max(0, Math.min(1, t));
+}
+
+function projectT(p: LatLng, a: LatLng, b: LatLng) {
+  const x = (b.lng - a.lng) * Math.cos((a.lat * Math.PI) / 180);
+  const y = b.lat - a.lat;
+  const len2 = x * x + y * y;
+  if (len2 < 1e-18) return 0;
+  const px = (p.lng - a.lng) * Math.cos((a.lat * Math.PI) / 180);
+  const py = p.lat - a.lat;
+  return (px * x + py * y) / len2;
+}
+
+export function distToPath(point: LatLng, points: LatLng[]): number {
+  return snapToPath(point, points).distMi;
 }
 
 export function trafficAt(zones: TrafficZone[], traveledMi: number): TrafficLevel {

@@ -11,6 +11,7 @@ import {
   SearchPanel,
 } from "@/components/panels";
 import { useApp } from "@/lib/store";
+import { startGps } from "@/lib/gps";
 
 export function AppShell() {
   const [client, setClient] = useState(false);
@@ -29,9 +30,13 @@ export function AppShell() {
     };
     if (api.hasHydrated()) {
       maybeOnboard();
+      startGps();
       return;
     }
-    return api.onFinishHydration(maybeOnboard);
+    return api.onFinishHydration(() => {
+      maybeOnboard();
+      startGps();
+    });
   }, [client]);
 
   useEffect(() => {

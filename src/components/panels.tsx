@@ -30,16 +30,17 @@ import {
   AMENITY_LABEL,
   REPORT_META,
   TRUCK_CLASSES,
-  facilityById,
 } from "@/lib/data";
 import {
   getPosition,
   isScaleOpen,
   nearbyFacilities,
+  resolveFacility,
   searchFacilities,
   searchPlaces,
   useApp,
 } from "@/lib/store";
+import { startGps } from "@/lib/gps";
 import { geocodePlaces } from "@/lib/routing";
 import { formatDiesel, formatHeight, formatHms, formatMi, formatWeight } from "@/lib/format";
 import type { Amenity, Place, ReportKind } from "@/lib/types";
@@ -80,7 +81,7 @@ export function SearchPanel() {
     abortRef.current = ac;
     setSearching(true);
     const t = window.setTimeout(() => {
-      void geocodePlaces(query, ac.signal)
+      void geocodePlaces(query, ac.signal, useApp.getState().origin)
         .then((places) => {
           if (!ac.signal.aborted) setLive(places);
         })
@@ -108,7 +109,7 @@ export function SearchPanel() {
       open={overlay === "search"}
       onClose={() => setOverlay("none")}
       title="Where to"
-      subtitle="Any city, port, yard, or highway — worldwide"
+      subtitle="Any city on earth — truck-legal highways from your GPS"
     >
       <Input
         autoFocus={overlay === "search"}
@@ -397,7 +398,7 @@ export function FacilityPanel() {
   const overlay = useApp((s) => s.overlay);
   const setOverlay = useApp((s) => s.setOverlay);
   const id = useApp((s) => s.selectedFacilityId);
-  const facility = id ? facilityById(id) : undefined;
+  const facility = id ? resolveFacility(id) : undefined;
   const pos = getPosition();
 
   if (!facility) {
@@ -514,12 +515,18 @@ export function OnboardPanel() {
           </p>
         </div>
         <ul className="flex flex-col gap-2 text-sm">
-          <li className="rounded-lg bg-secondary px-3 py-2">Search any city worldwide, then Start to roll.</li>
-          <li className="rounded-lg bg-secondary px-3 py-2">Tap + to drop a cop, crash, or hazard pin.</li>
-          <li className="rounded-lg bg-secondary px-3 py-2">Set your height and weight so low bridges get skipped.</li>
+          <li className="rounded-lg bg-secondary px-3 py-2">Allow GPS — the map sits on your cab and moves with you.</li>
+          <li className="rounded-lg bg-secondary px-3 py-2">Search any city on earth. Routes prefer truck highways and skip low clearances.</li>
+          <li className="rounded-lg bg-secondary px-3 py-2">Set height and weight in your rig profile so bridges get flagged.</li>
         </ul>
-        <Button size="lg" className="mt-2" onClick={completeOnboard}>
-          Take the wheel
+        <Button
+          size="lg"
+          className="mt-2"
+          onClick={() => {
+            startGps();
+            completeOnboard();
+          }}
+        >
         </Button>
       </div>
     </SlidePanel>

@@ -1,5 +1,5 @@
-import type { Instruction, LatLng, Place, Route } from "./types";
-import { densify, pathLength } from "./geo";
+import type { Instruction, LatLng, Place, Restriction, Route, TruckProfile } from "./types";
+import { densify, haversine, pathLength } from "./geo";
 
 type PhotonFeature = {
   geometry: { coordinates: [number, number] };
@@ -29,10 +29,11 @@ type OsrmRoute = {
   legs: { steps: OsrmStep[] }[];
 };
 
-export async function geocodePlaces(q: string, signal?: AbortSignal): Promise<Place[]> {
+export async function geocodePlaces(q: string, signal?: AbortSignal, near?: LatLng): Promise<Place[]> {
   const query = q.trim();
   if (query.length < 2) return [];
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=7&lang=en`;
+  const bias = near ? `&lat=${near.lat}&lon=${near.lng}` : "";
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=7&lang=en${bias}`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error("geocode failed");
   const data = (await res.json()) as { features?: PhotonFeature[] };
@@ -56,6 +57,18 @@ export async function geocodePlaces(q: string, signal?: AbortSignal): Promise<Pl
     });
   }
   return out;
+}
+
+export async function reverseGeocode(coord: LatLng, signal?: AbortSignal): Promise<string> {
+  const url = `https://photon.komoot.io/reverse?lat=${coord.lat}&lon=${coord.lng}&lang=en`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) return "GPS fix";
+  const data = (await res.json()) as { features?: PhotonFeature[] };
+  const p = data.features?.[0]?.properties;
+  if (!p) return "GPS fix";
+  const bits = [p.name, p.city, p.state, p.country].filter(Boolean);
+  const uniq = [...new Set(bits)];
+  return uniq.slice(0, 3).join(" · ") || "GPS fix";
 }
 
 function turnLine(step: OsrmStep): { primary: string; secondary: string } {
@@ -117,9 +130,202 @@ export async function fetchDrivingRoute(from: LatLng, to: Place, signal?: AbortS
     polyline,
     distanceMi,
     durationMin,
-    highways: highways.length ? highways : ["Local roads"],
+    highways: highways.length ? highways : ["Highway"],
     restrictions: [],
     traffic: [],
     instructions,
   };
+}
+
+const HINT: Record<number, string> = {
+  1: "Continue",
+  2: "Turn left",
+  3: "Slight left",
+  4: "Sharp left",
+  5: "Turn right",
+  6: "Slight right",
+  7: "Sharp right",
+  8: "U-turn",
+  10: "Keep left",
+  11: "Keep right",
+  13: "Roundabout",
+  14: "Take the ramp",
+};
+
+function parseTags(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of raw.split(/\s+/)) {
+    const i = part.indexOf("=");
+    if (i <= 0) continue;
+    out[part.slice(0, i)] = part.slice(i + 1);
+  }
+  return out;
+}
+
+function parseHeightM(raw: string): number | null {
+  const m = raw.match(/(\d+(?:\.\d+)?)\s*m/i);
+  if (m) return Number(m[1]);
+  const ft = raw.match(/(\d+)\s*['′]/);
+  if (ft) {
+    const inch = raw.match(/(\d+)\s*[\"″]/);
+    return (Number(ft[1]) + (inch ? Number(inch[1]) / 12 : 0)) * 0.3048;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (n > 2 && n < 8) return n;
+  if (n >= 8 && n <= 18) return n * 0.3048;
+  return null;
+}
+
+function parseWeightT(raw: string): number | null {
+  const t = raw.match(/(\d+(?:\.\d+)?)\s*t/i);
+  if (t) return Number(t[1]);
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (n > 2 && n < 80) return n;
+  return null;
+}
+
+async function fetchBrouterRoute(
+  from: LatLng,
+  to: Place,
+  profile: TruckProfile,
+  signal?: AbortSignal,
+): Promise<Route | null> {
+  const url =
+    `https://brouter.de/brouter?lonlats=${from.lng},${from.lat}|${to.coord.lng},${to.coord.lat}` +
+    `&profile=car-fast&alternativeidx=0&format=geojson`;
+  const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
+  if (!res.ok) return null;
+  const data = (await res.json()) as {
+    features?: {
+      geometry?: { coordinates?: [number, number][] };
+      properties?: {
+        "track-length"?: string;
+        "total-time"?: string;
+        messages?: string[][];
+        voicehints?: number[][];
+      };
+    }[];
+  };
+  const feat = data.features?.[0];
+  const coords = feat?.geometry?.coordinates;
+  if (!feat || !coords?.length) return null;
+  const polyline = densify(
+    coords.map(([lng, lat]) => ({ lat, lng })),
+    0.9,
+  );
+  const distanceMi = pathLength(polyline) || Number(feat.properties?.["track-length"] ?? 0) / 1609.34;
+  const durationMin = Math.max(1, Math.round(Number(feat.properties?.["total-time"] ?? 0) / 60) || Math.round((distanceMi / 55) * 60));
+
+  const messages = feat.properties?.messages ?? [];
+  const tagRows = messages.slice(1);
+  const highways: string[] = [];
+  const restrictions: Restriction[] = [];
+  let accMi = 0;
+  const heightM = profile.heightFt * 0.3048;
+  const weightT = profile.weightLbs / 2204.62;
+  for (const row of tagRows) {
+    const distM = Number(row[3] ?? 0);
+    const tags = parseTags(row[9] ?? "");
+    const ref = tags.ref || tags.highway;
+    if (tags.ref && !highways.includes(tags.ref) && highways.length < 5) highways.push(tags.ref);
+    else if (ref && highways.length === 0) highways.push(ref);
+    if (tags.hgv === "no") {
+      restrictions.push({ atMi: accMi, type: "weight", label: "HGV restriction on this stretch" });
+    }
+    if (tags.maxheight) {
+      const h = parseHeightM(tags.maxheight);
+      if (h != null && h + 0.05 < heightM) {
+        restrictions.push({
+          atMi: accMi,
+          type: "low_bridge",
+          label: `Low clearance ${tags.maxheight} — check your ${profile.heightFt.toFixed(1)} ft`,
+          heightFt: h / 0.3048,
+        });
+      }
+    }
+    if (tags.maxweight) {
+      const w = parseWeightT(tags.maxweight);
+      if (w != null && w + 0.5 < weightT) {
+        restrictions.push({ atMi: accMi, type: "weight", label: `Weight limit ${tags.maxweight}` });
+      }
+    }
+    if (profile.hazmat && (tags.hazmat === "no" || tags.hgv === "no")) {
+      restrictions.push({ atMi: accMi, type: "hazmat", label: "Hazmat restricted" });
+    }
+    accMi += distM / 1609.34;
+  }
+
+  const instructions: Instruction[] = [];
+  const hints = feat.properties?.voicehints ?? [];
+  if (hints.length) {
+    for (const h of hints) {
+      const idx = h[0] ?? 0;
+      const cmd = h[1] ?? 1;
+      const at = Math.min(distanceMi, (idx / Math.max(1, coords.length - 1)) * distanceMi);
+      const tags = parseTags(tagRows[Math.min(idx, tagRows.length - 1)]?.[9] ?? "");
+      instructions.push({
+        atMi: at,
+        primary: HINT[cmd] ?? "Continue",
+        secondary: tags.ref || tags.name || tags.highway || "truck route",
+      });
+    }
+  }
+  if (instructions.length === 0) {
+    instructions.push({ atMi: 0, primary: "Head out on truck route", secondary: highways[0] ?? to.name });
+  }
+  instructions.push({ atMi: Math.max(0, distanceMi - 0.2), primary: "Arrive", secondary: to.name });
+
+  return {
+    id: `truck-${to.id}`,
+    fromId: "origin",
+    toId: to.id,
+    polyline,
+    distanceMi,
+    durationMin,
+    highways: highways.length ? highways : ["Truck route"],
+    restrictions: restrictions.slice(0, 8),
+    traffic: [],
+    instructions,
+  };
+}
+
+export async function fetchTruckRoute(
+  from: LatLng,
+  to: Place,
+  profile: TruckProfile,
+  signal?: AbortSignal,
+): Promise<Route | null> {
+  const miles = haversine(from, to.coord);
+  if (miles < 0.05) return null;
+  if (miles < 120) {
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    signal?.addEventListener("abort", onAbort);
+    const timer = setTimeout(() => ctrl.abort(), 14000);
+    try {
+      const truck = await fetchBrouterRoute(from, to, profile, ctrl.signal);
+      if (truck) return truck;
+    } catch {
+      /* OSRM fallback */
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+  const osrm = await fetchDrivingRoute(from, to, signal);
+  if (osrm) {
+    return {
+      ...osrm,
+      id: `truck-${to.id}`,
+      highways: osrm.highways,
+      restrictions: osrm.restrictions,
+    };
+  }
+  try {
+    return await fetchBrouterRoute(from, to, profile, signal);
+  } catch {
+    return null;
+  }
 }

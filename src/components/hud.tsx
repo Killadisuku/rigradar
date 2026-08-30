@@ -27,6 +27,7 @@ import {
   useApp,
 } from "@/lib/store";
 import { POSTED_LIMIT } from "@/lib/data";
+import { startGps } from "@/lib/gps";
 import { arrivalClock, formatDiesel, formatEta, formatHms, formatMi, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -99,7 +100,8 @@ function TopChrome() {
         className="flex h-12 min-w-0 flex-1 items-center gap-3 rounded-full bg-card px-4 shadow-border"
       >
         <Search className="size-4 shrink-0 text-muted-foreground" />
-        <span className="truncate text-sm text-muted-foreground">Where to, driver?</span>
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">Where to, driver?</span>
+        <GpsChip />
       </button>
       <Button
         variant="secondary"
@@ -121,6 +123,20 @@ function TopChrome() {
       </Button>
     </div>
   );
+}
+
+function GpsChip() {
+  const status = useApp((s) => s.gpsStatus);
+  if (status === "live") {
+    return <span className="shrink-0 text-xs font-medium text-primary">GPS</span>;
+  }
+  if (status === "pending") {
+    return <span className="shrink-0 text-xs text-muted-foreground">fix…</span>;
+  }
+  if (status === "denied") {
+    return <span className="shrink-0 text-xs text-warn">off</span>;
+  }
+  return null;
 }
 
 function AlertBanner() {
@@ -150,7 +166,8 @@ function AlertBanner() {
 
 function SpeedBubble() {
   const nav = useApp((s) => s.nav);
-  const speed = nav.active ? nav.speedMph : 0;
+  const gps = useApp((s) => s.gps);
+  const speed = gps && Date.now() - gps.at < 8000 ? gps.speedMph : nav.active ? nav.speedMph : 0;
   const speeding = speed > POSTED_LIMIT + 2;
   return (
     <div className="pointer-events-none absolute bottom-56 left-3 md:bottom-8 md:left-4">
@@ -174,16 +191,20 @@ function SpeedBubble() {
 function SideControls() {
   const setOverlay = useApp((s) => s.setOverlay);
   const follow = useApp((s) => s.nav.follow);
+  const gpsStatus = useApp((s) => s.gpsStatus);
   const setFollow = useApp((s) => s.setFollow);
   return (
     <div className="pointer-events-auto absolute right-3 bottom-56 flex flex-col gap-2 md:top-1/3 md:right-4 md:bottom-auto">
-      {!follow ? (
+      {!follow || gpsStatus !== "live" ? (
         <Button
           variant="secondary"
           size="icon"
           className="size-12 rounded-full shadow-border"
-          onClick={() => setFollow(true)}
-          aria-label="Recenter"
+          onClick={() => {
+            startGps();
+            setFollow(true);
+          }}
+          aria-label="Use my GPS"
         >
           <Locate />
         </Button>
