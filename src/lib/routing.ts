@@ -62,13 +62,13 @@ export async function geocodePlaces(q: string, signal?: AbortSignal, near?: LatL
 export async function reverseGeocode(coord: LatLng, signal?: AbortSignal): Promise<string> {
   const url = `https://photon.komoot.io/reverse?lat=${coord.lat}&lon=${coord.lng}&lang=en`;
   const res = await fetch(url, { signal });
-  if (!res.ok) return "GPS fix";
+  if (!res.ok) return "Your location";
   const data = (await res.json()) as { features?: PhotonFeature[] };
   const p = data.features?.[0]?.properties;
-  if (!p) return "GPS fix";
+  if (!p) return "Your location";
   const bits = [p.name, p.city, p.state, p.country].filter(Boolean);
   const uniq = [...new Set(bits)];
-  return uniq.slice(0, 3).join(" · ") || "GPS fix";
+  return uniq.slice(0, 3).join(" · ") || "Your location";
 }
 
 function turnLine(step: OsrmStep): { primary: string; secondary: string } {
@@ -186,15 +186,41 @@ function parseWeightT(raw: string): number | null {
   return null;
 }
 
+function tollNogos(rows: string[][]): string {
+  const pts: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const tags = parseTags(row[9] ?? "");
+    if (tags.toll !== "yes" && tags.fee !== "yes") continue;
+    const lon = Number(row[0]) / 1e6;
+    const lat = Number(row[1]) / 1e6;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const key = `${lon.toFixed(4)},${lat.toFixed(4)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pts.push(`${lon},${lat},40`);
+    if (pts.length >= 24) break;
+  }
+  return pts.join("|");
+}
+
 async function fetchBrouterRoute(
   from: LatLng,
   to: Place,
   profile: TruckProfile,
   signal?: AbortSignal,
+  avoidTolls = false,
+  nogos = "",
 ): Promise<Route | null> {
+  const extra = [
+    avoidTolls ? "avoid_toll=true" : "",
+    nogos ? `nogos=${encodeURIComponent(nogos)}` : "",
+  ]
+    .filter(Boolean)
+    .join("&");
   const url =
     `https://brouter.de/brouter?lonlats=${from.lng},${from.lat}|${to.coord.lng},${to.coord.lat}` +
-    `&profile=car-fast&alternativeidx=0&format=geojson`;
+    `&profile=car-fast&alternativeidx=0&format=geojson${extra ? `&${extra}` : ""}`;
   const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
   if (!res.ok) return null;
   const data = (await res.json()) as {
@@ -277,6 +303,19 @@ async function fetchBrouterRoute(
   }
   instructions.push({ atMi: Math.max(0, distanceMi - 0.2), primary: "Arrive", secondary: to.name });
 
+  if (avoidTolls && !nogos) {
+    const block = tollNogos(tagRows);
+    if (block) {
+      try {
+        const rerouted = await fetchBrouterRoute(from, to, profile, signal, true, block);
+        if (rerouted) return rerouted;
+      } catch {
+        /* keep this route and flag tolls */
+      }
+      restrictions.unshift({ atMi: 0, type: "weight", label: "Could not skip every toll — check gates" });
+    }
+  }
+
   return {
     id: `truck-${to.id}`,
     fromId: "origin",
@@ -295,17 +334,18 @@ export async function fetchTruckRoute(
   from: LatLng,
   to: Place,
   profile: TruckProfile,
+  avoidTolls = false,
   signal?: AbortSignal,
 ): Promise<Route | null> {
   const miles = haversine(from, to.coord);
   if (miles < 0.05) return null;
-  if (miles < 120) {
+  if (miles < 120 || avoidTolls) {
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
     signal?.addEventListener("abort", onAbort);
-    const timer = setTimeout(() => ctrl.abort(), 14000);
+    const timer = setTimeout(() => ctrl.abort(), 16000);
     try {
-      const truck = await fetchBrouterRoute(from, to, profile, ctrl.signal);
+      const truck = await fetchBrouterRoute(from, to, profile, ctrl.signal, avoidTolls);
       if (truck) return truck;
     } catch {
       /* OSRM fallback */
@@ -320,11 +360,13 @@ export async function fetchTruckRoute(
       ...osrm,
       id: `truck-${to.id}`,
       highways: osrm.highways,
-      restrictions: osrm.restrictions,
+      restrictions: avoidTolls
+        ? [...osrm.restrictions, { atMi: 0, type: "weight", label: "Toll-free routing unavailable on this stretch" }]
+        : osrm.restrictions,
     };
   }
   try {
-    return await fetchBrouterRoute(from, to, profile, signal);
+    return await fetchBrouterRoute(from, to, profile, signal, avoidTolls);
   } catch {
     return null;
   }

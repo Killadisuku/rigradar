@@ -1,6 +1,4 @@
 import {
-  Clock,
-  Fuel,
   Layers,
   Locate,
   MapPin,
@@ -17,8 +15,6 @@ import { Badge } from "@/components/ui/badge";
 import { Logo } from "@/components/logo";
 import {
   currentInstruction,
-  getPosition,
-  nearbyFacilities,
   nextInstruction,
   remainingMin,
   reportsOnRoute,
@@ -28,7 +24,7 @@ import {
 } from "@/lib/store";
 import { POSTED_LIMIT } from "@/lib/data";
 import { startGps } from "@/lib/gps";
-import { arrivalClock, formatDiesel, formatEta, formatHms, formatMi, formatSpeed } from "@/lib/format";
+import { arrivalClock, formatEta, formatMi, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function Hud() {
@@ -101,7 +97,6 @@ function TopChrome() {
       >
         <Search className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">Where to, driver?</span>
-        <GpsChip />
       </button>
       <Button
         variant="secondary"
@@ -123,20 +118,6 @@ function TopChrome() {
       </Button>
     </div>
   );
-}
-
-function GpsChip() {
-  const status = useApp((s) => s.gpsStatus);
-  if (status === "live") {
-    return <span className="shrink-0 text-xs font-medium text-primary">GPS</span>;
-  }
-  if (status === "pending") {
-    return <span className="shrink-0 text-xs text-muted-foreground">fix…</span>;
-  }
-  if (status === "denied") {
-    return <span className="shrink-0 text-xs text-warn">off</span>;
-  }
-  return null;
 }
 
 function AlertBanner() {
@@ -223,14 +204,11 @@ function SideControls() {
 
 function Dock() {
   const nav = useApp((s) => s.nav);
-  const hos = useApp((s) => s.hos);
   const overlay = useApp((s) => s.overlay);
   const setOverlay = useApp((s) => s.setOverlay);
   const startNav = useApp((s) => s.startNav);
   const stopNav = useApp((s) => s.stopNav);
   const originLabel = useApp((s) => s.originLabel);
-  const pos = getPosition();
-  const near = nearbyFacilities(pos.coord, 1)[0];
   const dest = resolvePlace(nav.destId);
   const route = resolveRoute(nav.routeId);
 
@@ -278,17 +256,6 @@ function Dock() {
             <Stat label="Remain" value={formatMi(remainMi)} />
             <Stat label="Arrive" value={arrivalClock(eta)} />
           </div>
-          <button
-            type="button"
-            onClick={() => setOverlay("hos")}
-            className="mt-3 flex w-full items-center justify-between rounded-xl bg-secondary px-3 py-2.5"
-          >
-            <span className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="size-4" />
-              Drive left
-            </span>
-            <span className="font-display text-lg font-semibold tabular-nums">{formatHms(hos.driveSec)}</span>
-          </button>
           {route.restrictions.length > 0 ? (
             <ul className="mt-3 flex flex-col gap-1">
               {route.restrictions.slice(0, 2).map((r) => (
@@ -313,8 +280,8 @@ function Dock() {
                 </Button>
               </>
             ) : (
-              <Button variant="secondary" className="flex-1" onClick={() => setOverlay("hos")}>
-                HOS clocks
+              <Button variant="secondary" className="flex-1" onClick={stopNav}>
+                End navigation
               </Button>
             )}
           </div>
@@ -330,49 +297,13 @@ function Dock() {
           <Logo className="size-9" />
           <div className="min-w-0">
             <p className="font-display text-xl leading-none font-semibold tracking-tight">RigRadar</p>
-            <p className="mt-1 truncate text-sm text-muted-foreground">Demo GPS · {originLabel}</p>
+            <p className="mt-1 truncate text-sm text-muted-foreground">{originLabel}</p>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => setOverlay("hos")}
-            className="rounded-xl bg-secondary px-3 py-3 text-left"
-          >
-            <p className="text-xs text-muted-foreground">Drive</p>
-            <p className="font-display text-lg font-semibold tabular-nums">{formatHms(hos.driveSec)}</p>
-          </button>
-          <button
-            type="button"
-            onClick={() => setOverlay("search")}
-            className="rounded-xl bg-secondary px-3 py-3 text-left"
-          >
-            <p className="text-xs text-muted-foreground">Parking</p>
-            <p className="font-display text-lg font-semibold tabular-nums">
-              {near ? `${near.parking.open}` : "—"}
-            </p>
-          </button>
-          <button
-            type="button"
-            onClick={() => setOverlay("search")}
-            className="rounded-xl bg-secondary px-3 py-3 text-left"
-          >
-            <p className="text-xs text-muted-foreground">Diesel</p>
-            <p className="font-display text-lg font-semibold tabular-nums text-primary">
-              {near?.diesel != null ? formatDiesel(near.diesel) : "—"}
-            </p>
-          </button>
-        </div>
-        <div className="mt-3 flex gap-2">
-          <Button className="flex-1" onClick={() => setOverlay("search")}>
-            <MapPin className="size-4" />
-            Navigate
-          </Button>
-          <Button variant="secondary" onClick={() => setOverlay("search")}>
-            <Fuel className="size-4" />
-            Stops
-          </Button>
-        </div>
+        <Button className="mt-4 w-full" onClick={() => setOverlay("search")}>
+          <MapPin className="size-4" />
+          Navigate
+        </Button>
       </div>
     </div>
   );

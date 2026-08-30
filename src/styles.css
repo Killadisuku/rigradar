@@ -150,7 +150,7 @@
 }
 
 .leaflet-container.is-night .leaflet-tile-pane {
-  filter: invert(1) hue-rotate(180deg) saturate(0.45) brightness(0.9) contrast(1.05);
+  filter: brightness(0.72) saturate(0.62) contrast(1.08);
 }
 
 .leaflet-container:not(.is-night) {

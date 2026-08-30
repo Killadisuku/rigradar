@@ -239,6 +239,8 @@ export function LayersPanel() {
   const setOverlay = useApp((s) => s.setOverlay);
   const layers = useApp((s) => s.layers);
   const setLayers = useApp((s) => s.setLayers);
+  const avoidTolls = useApp((s) => s.avoidTolls);
+  const setAvoidTolls = useApp((s) => s.setAvoidTolls);
   const nightMap = useApp((s) => s.nightMap);
   const setNightMap = useApp((s) => s.setNightMap);
   const voiceOn = useApp((s) => s.voiceOn);
@@ -250,7 +252,6 @@ export function LayersPanel() {
     { key: "scales", label: "Weigh stations", hint: "Open / closed" },
     { key: "reports", label: "Community reports", hint: "Police, crashes, hazards" },
     { key: "traffic", label: "Traffic colors", hint: "On the active route" },
-    { key: "convoy", label: "Nearby fleet", hint: "Other trucks on the corridor" },
   ];
 
   return (
@@ -275,6 +276,13 @@ export function LayersPanel() {
         ))}
       </div>
       <Separator className="my-3" />
+      <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">
+        <span>
+          <span className="block font-medium">Avoid tolls</span>
+          <span className="block text-sm text-muted-foreground">Stay off paid highways when a free truck route exists</span>
+        </span>
+        <Switch checked={avoidTolls} onCheckedChange={setAvoidTolls} />
+      </label>
       <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">
         <span>
           <span className="block font-medium">Night map</span>
@@ -515,8 +523,8 @@ export function OnboardPanel() {
           </p>
         </div>
         <ul className="flex flex-col gap-2 text-sm">
-          <li className="rounded-lg bg-secondary px-3 py-2">Allow GPS — the map sits on your cab and moves with you.</li>
-          <li className="rounded-lg bg-secondary px-3 py-2">Search any city on earth. Routes prefer truck highways and skip low clearances.</li>
+          <li className="rounded-lg bg-secondary px-3 py-2">Allow location — the map sits on your cab and moves with you.</li>
+          <li className="rounded-lg bg-secondary px-3 py-2">Search any city in English. Routes prefer truck highways. Turn on Avoid tolls in Map.</li>
           <li className="rounded-lg bg-secondary px-3 py-2">Set height and weight in your rig profile so bridges get flagged.</li>
         </ul>
         <Button

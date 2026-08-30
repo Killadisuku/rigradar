@@ -3,7 +3,6 @@ import { MapCanvas } from "@/components/map-canvas";
 import { Hud } from "@/components/hud";
 import {
   FacilityPanel,
-  HosPanel,
   LayersPanel,
   OnboardPanel,
   ProfilePanel,
@@ -58,7 +57,7 @@ export function AppShell() {
         <MapCanvas />
       </div>
       <p className="pointer-events-none absolute bottom-36 left-3 z-10 text-xs text-muted-foreground md:bottom-4">
-        © OpenStreetMap
+        © Esri
       </p>
       <Hud />
       {client ? (
@@ -68,7 +67,6 @@ export function AppShell() {
           <LayersPanel />
           <ProfilePanel />
           <FacilityPanel />
-          <HosPanel />
           <OnboardPanel />
         </>
       ) : null}

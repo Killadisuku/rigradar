@@ -9,8 +9,8 @@ import {
 } from "@/lib/store";
 import { pointAlong } from "@/lib/geo";
 
-const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ESRI_STREET = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 
 type LNS = typeof import("leaflet");
 
@@ -115,18 +115,18 @@ export function MapCanvas() {
       });
       rootRef.current.classList.toggle("is-night", useApp.getState().nightMap);
 
-      const osm = L.tileLayer(OSM, {
+      const street = L.tileLayer(ESRI_STREET, {
         maxZoom: 19,
-        maxNativeZoom: 19,
+        maxNativeZoom: 16,
       });
       let fellBack = false;
-      osm.on("tileerror", () => {
+      street.on("tileerror", () => {
         if (fellBack || !map) return;
         fellBack = true;
-        osm.remove();
-        tiles = L.tileLayer(ESRI_STREET, { maxZoom: 16, maxNativeZoom: 16 }).addTo(map);
+        street.remove();
+        tiles = L.tileLayer(OSM, { maxZoom: 19, maxNativeZoom: 19 }).addTo(map);
       });
-      tiles = osm.addTo(map);
+      tiles = street.addTo(map);
 
       const routeCasing: Polyline = L.polyline([], {
         color: "#06221e",

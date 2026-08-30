@@ -49,7 +49,7 @@ const DEFAULT_LAYERS: Layers = {
   scales: true,
   reports: true,
   traffic: true,
-  convoy: true,
+  convoy: false,
 };
 
 const DEFAULT_HOS: HosState = {
@@ -114,6 +114,7 @@ type AppState = {
   layers: Layers;
   voiceOn: boolean;
   nightMap: boolean;
+  avoidTolls: boolean;
   overlay: Overlay;
   seenOnboard: boolean;
   extraReports: Report[];
@@ -134,6 +135,7 @@ type AppState = {
   setLayers: (l: Partial<Layers>) => void;
   setVoice: (on: boolean) => void;
   setNightMap: (on: boolean) => void;
+  setAvoidTolls: (on: boolean) => void;
   setOverlay: (o: Overlay) => void;
   completeOnboard: () => void;
   setFollow: (on: boolean) => void;
@@ -162,6 +164,7 @@ export const useApp = create<AppState>()(
       layers: DEFAULT_LAYERS,
       voiceOn: true,
       nightMap: true,
+      avoidTolls: false,
       overlay: "none",
       seenOnboard: false,
       extraReports: [],
@@ -186,6 +189,7 @@ export const useApp = create<AppState>()(
         set({ voiceOn: on });
       },
       setNightMap: (on) => set({ nightMap: on }),
+      setAvoidTolls: (on) => set({ avoidTolls: on }),
       setOverlay: (o) => set({ overlay: o }),
       completeOnboard: () => set({ seenOnboard: true, overlay: "none" }),
       setFollow: (on) => set({ nav: { ...get().nav, follow: on } }),
@@ -230,7 +234,7 @@ export const useApp = create<AppState>()(
               const dest = s.extraPlaces.find((p) => p.id === nav.destId) ?? placeById(nav.destId ?? "");
               if (dest && Date.now() - lastRerouteAt > 14000) {
                 lastRerouteAt = Date.now();
-                void fetchTruckRoute(fix.coord, dest, s.profile).then((route) => {
+                void fetchTruckRoute(fix.coord, dest, s.profile, s.avoidTolls).then((route) => {
                   if (!route) return;
                   const cur = get();
                   if (!cur.nav.active || cur.nav.destId !== dest.id) return;
@@ -297,7 +301,7 @@ export const useApp = create<AppState>()(
           alert: `Plotting a truck route to ${place.name}…`,
           alertKey: `plot-${place.id}`,
         });
-        void fetchTruckRoute(origin, place, get().profile)
+        void fetchTruckRoute(origin, place, get().profile, get().avoidTolls)
           .then((route) => {
             if (!route) throw new Error("no route");
             resetVoice();
@@ -549,6 +553,7 @@ export const useApp = create<AppState>()(
         layers: s.layers,
         voiceOn: s.voiceOn,
         nightMap: s.nightMap,
+        avoidTolls: s.avoidTolls,
         seenOnboard: s.seenOnboard,
         extraReports: s.extraReports,
         extraFacilities: s.extraFacilities,
@@ -562,6 +567,8 @@ export const useApp = create<AppState>()(
           ...current,
           ...p,
           seenOnboard: Boolean(current.seenOnboard || p.seenOnboard),
+          layers: { ...DEFAULT_LAYERS, ...(p.layers ?? {}), convoy: false },
+          avoidTolls: Boolean(p.avoidTolls),
         };
       },
     },
