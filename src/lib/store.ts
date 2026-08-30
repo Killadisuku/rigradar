@@ -13,6 +13,7 @@ import type {
   Report,
   ReportKind,
   Route,
+  TravelMode,
   TruckProfile,
 } from "./types";
 import {
@@ -31,7 +32,7 @@ import {
 } from "./data";
 import { distToPath, haversine, offset, pointAlong, snapToPath, trafficAt } from "./geo";
 import { formatMi } from "./format";
-import { fetchTruckRoute } from "./routing";
+import { fetchNavRoute } from "./routing";
 import { resetVoice, speak } from "./voice";
 
 const DEFAULT_PROFILE: TruckProfile = {
@@ -115,6 +116,8 @@ type AppState = {
   voiceOn: boolean;
   nightMap: boolean;
   avoidTolls: boolean;
+  travelMode: TravelMode;
+  satellite: boolean;
   overlay: Overlay;
   seenOnboard: boolean;
   extraReports: Report[];
@@ -136,6 +139,8 @@ type AppState = {
   setVoice: (on: boolean) => void;
   setNightMap: (on: boolean) => void;
   setAvoidTolls: (on: boolean) => void;
+  setTravelMode: (mode: TravelMode) => void;
+  setSatellite: (on: boolean) => void;
   setOverlay: (o: Overlay) => void;
   completeOnboard: () => void;
   setFollow: (on: boolean) => void;
@@ -165,6 +170,8 @@ export const useApp = create<AppState>()(
       voiceOn: true,
       nightMap: false,
       avoidTolls: false,
+      travelMode: "truck",
+      satellite: false,
       overlay: "none",
       seenOnboard: false,
       extraReports: [],
@@ -190,6 +197,15 @@ export const useApp = create<AppState>()(
       },
       setNightMap: (on) => set({ nightMap: on }),
       setAvoidTolls: (on) => set({ avoidTolls: on }),
+      setTravelMode: (mode) => {
+        if (get().travelMode === mode) return;
+        set({ travelMode: mode });
+        const dest = resolvePlace(get().nav.destId);
+        if (dest && (get().nav.preview || get().nav.active)) {
+          get().goToPlace(dest);
+        }
+      },
+      setSatellite: (on) => set({ satellite: on }),
       setOverlay: (o) => set({ overlay: o }),
       completeOnboard: () => set({ seenOnboard: true, overlay: "none" }),
       setFollow: (on) => set({ nav: { ...get().nav, follow: on } }),
@@ -234,7 +250,7 @@ export const useApp = create<AppState>()(
               const dest = s.extraPlaces.find((p) => p.id === nav.destId) ?? placeById(nav.destId ?? "");
               if (dest && Date.now() - lastRerouteAt > 14000) {
                 lastRerouteAt = Date.now();
-                void fetchTruckRoute(fix.coord, dest, s.profile, s.avoidTolls).then((route) => {
+                void fetchNavRoute(fix.coord, dest, s.profile, s.avoidTolls, s.travelMode).then((route) => {
                   if (!route) return;
                   const cur = get();
                   if (!cur.nav.active || cur.nav.destId !== dest.id) return;
@@ -242,7 +258,7 @@ export const useApp = create<AppState>()(
                   set({
                     extraRoutes: { ...cur.extraRoutes, [route.id]: route },
                     nav: { ...cur.nav, routeId: route.id, traveledMi: 0, speedMph: cur.gps?.speedMph ?? 0 },
-                    alert: "Rerouting on truck-legal roads.",
+                    alert: "Rerouting.",
                     alertKey: `re-${route.id}`,
                   });
                   speak("Rerouting.", cur.voiceOn);
@@ -295,13 +311,15 @@ export const useApp = create<AppState>()(
       goToPlace: (place) => {
         const origin = get().gps?.coord ?? get().origin;
         const extraPlaces = [place, ...get().extraPlaces.filter((p) => p.id !== place.id)].slice(0, 40);
+        const mode = get().travelMode;
+        const word = mode === "walk" ? "walking route" : `${mode} route`;
         set({
           extraPlaces,
           overlay: "none",
-          alert: `Plotting a truck route to ${place.name}…`,
+          alert: `Plotting a ${word} to ${place.name}…`,
           alertKey: `plot-${place.id}`,
         });
-        void fetchTruckRoute(origin, place, get().profile, get().avoidTolls)
+        void fetchNavRoute(origin, place, get().profile, get().avoidTolls, mode)
           .then((route) => {
             if (!route) throw new Error("no route");
             resetVoice();
@@ -326,7 +344,7 @@ export const useApp = create<AppState>()(
             set({
               overlay: "none",
               extraPlaces,
-              alert: `No truck route from here. Cab is now in ${place.name}.`,
+              alert: `No ${word} from here. Map is now on ${place.name}.`,
               alertKey: `reloc-${place.id}`,
             });
           });
@@ -553,6 +571,8 @@ export const useApp = create<AppState>()(
         layers: s.layers,
         voiceOn: s.voiceOn,
         avoidTolls: s.avoidTolls,
+        travelMode: s.travelMode,
+        satellite: s.satellite,
         seenOnboard: s.seenOnboard,
         extraReports: s.extraReports,
         extraFacilities: s.extraFacilities,
@@ -568,6 +588,8 @@ export const useApp = create<AppState>()(
           seenOnboard: Boolean(current.seenOnboard || p.seenOnboard),
           layers: { ...DEFAULT_LAYERS, ...(p.layers ?? {}), convoy: false },
           avoidTolls: Boolean(p.avoidTolls),
+          travelMode: p.travelMode === "car" || p.travelMode === "bus" || p.travelMode === "walk" ? p.travelMode : "truck",
+          satellite: Boolean(p.satellite),
         };
       },
     },

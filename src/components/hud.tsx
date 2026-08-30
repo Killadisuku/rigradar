@@ -4,6 +4,7 @@ import {
   MapPin,
   Plus,
   Search,
+  Satellite,
   Shield,
   Truck,
   Volume2,
@@ -22,7 +23,7 @@ import {
   resolveRoute,
   useApp,
 } from "@/lib/store";
-import { POSTED_LIMIT } from "@/lib/data";
+import { POSTED_LIMIT, TRAVEL_MODES } from "@/lib/data";
 import { startGps } from "@/lib/gps";
 import { arrivalClock, formatEta, formatMi, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -96,7 +97,7 @@ function TopChrome() {
         className="flex h-12 min-w-0 flex-1 items-center gap-3 rounded-full bg-card px-4 shadow-border"
       >
         <Search className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">Where to, driver?</span>
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">Where to?</span>
       </button>
       <Button
         variant="secondary"
@@ -174,6 +175,8 @@ function SideControls() {
   const follow = useApp((s) => s.nav.follow);
   const gpsStatus = useApp((s) => s.gpsStatus);
   const setFollow = useApp((s) => s.setFollow);
+  const satellite = useApp((s) => s.satellite);
+  const setSatellite = useApp((s) => s.setSatellite);
   return (
     <div className="pointer-events-auto absolute right-3 bottom-56 flex flex-col gap-2 md:top-1/3 md:right-4 md:bottom-auto">
       {!follow || gpsStatus !== "live" ? (
@@ -190,6 +193,15 @@ function SideControls() {
           <Locate />
         </Button>
       ) : null}
+      <Button
+        variant={satellite ? "default" : "secondary"}
+        size="icon"
+        className="size-12 rounded-full shadow-border"
+        onClick={() => setSatellite(!satellite)}
+        aria-label={satellite ? "Street map" : "Satellite view"}
+      >
+        <Satellite />
+      </Button>
       <Button
         size="icon"
         className="size-14 rounded-full"
@@ -209,6 +221,8 @@ function Dock() {
   const startNav = useApp((s) => s.startNav);
   const stopNav = useApp((s) => s.stopNav);
   const originLabel = useApp((s) => s.originLabel);
+  const travelMode = useApp((s) => s.travelMode);
+  const setTravelMode = useApp((s) => s.setTravelMode);
   const dest = resolvePlace(nav.destId);
   const route = resolveRoute(nav.routeId);
 
@@ -247,8 +261,14 @@ function Dock() {
               <p className="font-display text-2xl leading-none font-semibold tracking-tight">{dest.name}</p>
               <p className="mt-1 truncate text-sm text-muted-foreground">{route.highways.join(" · ")}</p>
             </div>
-            <Badge variant={legal ? "ok" : "warn"}>
-              {route.id.startsWith("live-") ? "Live roads" : legal ? "Truck-legal" : "Check clearance"}
+            <Badge variant={legal || travelMode !== "truck" ? "ok" : "warn"}>
+              {travelMode === "truck"
+                ? route.id.startsWith("live-")
+                  ? "Live roads"
+                  : legal
+                    ? "Truck-legal"
+                    : "Check clearance"
+                : TRAVEL_MODES.find((m) => m.id === travelMode)?.label ?? "Route"}
             </Badge>
           </div>
           <div className="mt-4 grid grid-cols-3 gap-2">
@@ -268,6 +288,23 @@ function Dock() {
           ) : null}
           {onRoute > 0 && nav.preview ? (
             <p className="mt-2 text-xs text-muted-foreground">{onRoute} live reports on this route</p>
+          ) : null}
+          {nav.preview ? (
+            <div className="mt-3 grid grid-cols-4 gap-1">
+              {TRAVEL_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setTravelMode(m.id)}
+                  className={cn(
+                    "rounded-lg py-2 text-xs font-medium",
+                    travelMode === m.id ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           ) : null}
           <div className="mt-4 flex gap-2">
             {nav.preview ? (

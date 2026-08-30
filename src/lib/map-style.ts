@@ -2,6 +2,8 @@ import type { Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 
 const BRIGHT = "https://tiles.openfreemap.org/styles/bright";
 const DARK = "https://tiles.openfreemap.org/styles/dark";
+const ESRI_SAT =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 /**
  * English / Latin script only.
@@ -18,12 +20,17 @@ const ENGLISH_NAME = [
 
 type LooseLayer = {
   id?: string;
+  type?: string;
   layout?: Record<string, unknown>;
+  paint?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
 type LooseStyle = {
   layers?: LooseLayer[];
+  sources?: Record<string, unknown>;
+  glyphs?: unknown;
+  sprite?: unknown;
   center?: unknown;
   zoom?: unknown;
   bearing?: unknown;
@@ -42,24 +49,55 @@ function isPlaceLabel(field: unknown): boolean {
   return /\["get","name"\]/.test(s) || s.includes("{name}");
 }
 
-function preferEnglish(style: LooseStyle): StyleSpecification {
+function preferEnglish(style: LooseStyle): LooseStyle {
   const layers = (style.layers ?? []).map((layer) => {
     const field = layer.layout?.["text-field"];
     if (!isPlaceLabel(field)) return layer;
     return { ...layer, layout: { ...layer.layout, "text-field": ENGLISH_NAME } };
   });
   const { center: _c, zoom: _z, bearing: _b, pitch: _p, ...rest } = style;
-  return { ...rest, layers } as StyleSpecification;
+  return { ...rest, layers };
 }
 
-export async function loadEnglishBasemap(night: boolean): Promise<StyleSpecification> {
-  const url = night ? DARK : BRIGHT;
-  const hit = cache.get(url);
+function withSatellite(style: LooseStyle): StyleSpecification {
+  const labels = (style.layers ?? [])
+    .filter((layer) => layer.type === "symbol")
+    .map((layer) => ({
+      ...layer,
+      paint: {
+        ...(layer.paint ?? {}),
+        "text-color": "#f4f4f5",
+        "text-halo-color": "#111111",
+        "text-halo-width": 1.5,
+        "text-halo-blur": 0.4,
+      },
+    }));
+  return {
+    ...style,
+    sources: {
+      ...(style.sources ?? {}),
+      esriSat: {
+        type: "raster",
+        tiles: [ESRI_SAT],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: "Esri",
+      },
+    },
+    layers: [{ id: "esri-sat", type: "raster", source: "esriSat" }, ...labels],
+  } as unknown as StyleSpecification;
+}
+
+export async function loadEnglishBasemap(night: boolean, satellite = false): Promise<StyleSpecification> {
+  const url = night && !satellite ? DARK : BRIGHT;
+  const key = `${url}|${satellite ? "sat" : "vec"}`;
+  const hit = cache.get(key);
   if (hit) return hit;
   const res = await fetch(url);
   if (!res.ok) throw new Error("basemap");
-  const style = preferEnglish((await res.json()) as LooseStyle);
-  cache.set(url, style);
+  const english = preferEnglish((await res.json()) as LooseStyle);
+  const style = satellite ? withSatellite(english) : (english as StyleSpecification);
+  cache.set(key, style);
   return style;
 }
 

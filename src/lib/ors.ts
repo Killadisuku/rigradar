@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { densify, pathLength } from "./geo";
-import type { Instruction, LatLng, Restriction, Route } from "./types";
+import type { Instruction, LatLng, Restriction, Route, TravelMode } from "./types";
 
 type OrsStep = {
   distance?: number;
@@ -20,17 +20,31 @@ type OrsFeature = {
 
 const ARABIC = /[\u0600-\u06FF]/;
 
-function englishLine(instruction: string, name: string): { primary: string; secondary: string } {
+const ROAD_WORD: Record<TravelMode, string> = {
+  truck: "truck route",
+  car: "the road",
+  bus: "bus route",
+  walk: "the path",
+};
+
+export function orsProfileFor(mode: TravelMode): "driving-hgv" | "driving-car" | "foot-walking" {
+  if (mode === "walk") return "foot-walking";
+  if (mode === "truck") return "driving-hgv";
+  return "driving-car";
+}
+
+function englishLine(instruction: string, name: string, mode: TravelMode): { primary: string; secondary: string } {
   let primary = instruction.replace(/\s+(on|onto)\s+.*/i, "").trim() || "Continue";
   if (ARABIC.test(primary)) primary = "Continue";
-  let secondary = name && name !== "-" ? name : "truck route";
-  if (ARABIC.test(secondary)) secondary = "local road";
+  let secondary = name && name !== "-" ? name : ROAD_WORD[mode];
+  if (ARABIC.test(secondary)) secondary = mode === "walk" ? "footpath" : "local road";
   return { primary, secondary };
 }
 
 function toRoute(
   feat: OrsFeature,
   to: { id: string; name: string },
+  mode: TravelMode,
   avoidedTolls: boolean,
   wantedTolls: boolean,
 ): Route | null {
@@ -48,7 +62,7 @@ function toRoute(
   const highways: string[] = [];
   let acc = 0;
   for (const step of steps) {
-    const line = englishLine(step.instruction ?? "Continue", step.name ?? "");
+    const line = englishLine(step.instruction ?? "Continue", step.name ?? "", mode);
     if (step.type !== 10 || instructions.length === 0) {
       instructions.push({ atMi: acc, primary: line.primary, secondary: line.secondary });
     }
@@ -57,23 +71,23 @@ function toRoute(
     acc += Number(step.distance ?? 0);
   }
   if (!instructions.length) {
-    instructions.push({ atMi: 0, primary: "Head out on truck route", secondary: to.name });
+    instructions.push({ atMi: 0, primary: "Head out", secondary: to.name });
   }
   if (instructions[instructions.length - 1]?.primary !== "Arrive at your destination") {
     instructions.push({ atMi: Math.max(0, distanceMi - 0.2), primary: "Arrive", secondary: to.name });
   }
   const restrictions: Restriction[] = [];
   if (wantedTolls && !avoidedTolls) {
-    restrictions.push({ atMi: 0, type: "weight", label: "No toll-free truck route — using the HGV highway" });
+    restrictions.push({ atMi: 0, type: "weight", label: "No toll-free route — using the paid highway" });
   }
   return {
-    id: `ors-${to.id}`,
+    id: `ors-${mode}-${to.id}`,
     fromId: "origin",
     toId: to.id,
     polyline,
     distanceMi,
     durationMin,
-    highways: highways.length ? highways : ["HGV route"],
+    highways: highways.length ? highways : [mode === "walk" ? "Walking" : mode === "bus" ? "Bus roads" : mode === "car" ? "Roads" : "HGV route"],
     restrictions,
     traffic: [],
     instructions,
@@ -84,12 +98,18 @@ async function orsGeojson(
   key: string,
   from: LatLng,
   to: LatLng,
-  restrictions: { height: number; width: number; length: number; weight: number; hazmat: boolean },
+  profile: ReturnType<typeof orsProfileFor>,
+  restrictions: { height: number; width: number; length: number; weight: number; hazmat: boolean } | null,
   avoidTolls: boolean,
 ): Promise<OrsFeature | null> {
   const avoid = ["ferries"];
   if (avoidTolls) avoid.push("tollways");
-  const res = await fetch("https://api.openrouteservice.org/v2/directions/driving-hgv/geojson", {
+  const options: Record<string, unknown> = { avoid_features: avoid };
+  if (profile === "driving-hgv" && restrictions) {
+    options.vehicle_type = "hgv";
+    options.profile_params = { restrictions };
+  }
+  const res = await fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
     method: "POST",
     headers: {
       Authorization: key,
@@ -105,11 +125,7 @@ async function orsGeojson(
       language: "en",
       instructions: true,
       geometry: true,
-      options: {
-        avoid_features: avoid,
-        vehicle_type: "hgv",
-        profile_params: { restrictions },
-      },
+      options,
     }),
   });
   if (res.status === 404) return null;
@@ -123,6 +139,7 @@ export const plotOrsRoute = createServerFn({ method: "POST" })
     (d: {
       from: LatLng;
       to: { id: string; name: string; lat: number; lng: number };
+      mode: TravelMode;
       heightFt: number;
       weightLbs: number;
       lengthFt: number;
@@ -149,20 +166,24 @@ export const plotOrsRoute = createServerFn({ method: "POST" })
       }
     }
     if (!key) return null;
-    const restrictions = {
-      height: data.heightFt * 0.3048,
-      width: 2.6,
-      length: data.lengthFt * 0.3048,
-      weight: data.weightLbs / 2204.62,
-      hazmat: data.hazmat,
-    };
+    const profile = orsProfileFor(data.mode);
+    const restrictions =
+      profile === "driving-hgv"
+        ? {
+            height: data.heightFt * 0.3048,
+            width: 2.6,
+            length: data.lengthFt * 0.3048,
+            weight: data.weightLbs / 2204.62,
+            hazmat: data.hazmat,
+          }
+        : null;
     const dest = { lat: data.to.lat, lng: data.to.lng };
-    let feat = await orsGeojson(key, data.from, dest, restrictions, data.avoidTolls);
+    let feat = await orsGeojson(key, data.from, dest, profile, restrictions, data.avoidTolls);
     let usedTollsAvoid = data.avoidTolls;
     if (!feat && data.avoidTolls) {
-      feat = await orsGeojson(key, data.from, dest, restrictions, false);
+      feat = await orsGeojson(key, data.from, dest, profile, restrictions, false);
       usedTollsAvoid = false;
     }
     if (!feat) return null;
-    return toRoute(feat, data.to, usedTollsAvoid, data.avoidTolls);
+    return toRoute(feat, data.to, data.mode, usedTollsAvoid, data.avoidTolls);
   });

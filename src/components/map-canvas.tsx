@@ -118,7 +118,7 @@ export function MapCanvas() {
         center: [start.lat, start.lng],
         zoom: 15,
         minZoom: 2,
-        maxZoom: 18,
+        maxZoom: 19,
         zoomSnap: 0.5,
       });
       rootRef.current.classList.toggle("is-night", useApp.getState().nightMap);
@@ -133,7 +133,7 @@ export function MapCanvas() {
         if (ml.loaded()) apply();
       };
       try {
-        const style = await loadEnglishBasemap(useApp.getState().nightMap);
+        const style = await loadEnglishBasemap(useApp.getState().nightMap, useApp.getState().satellite);
         if (cancelled || !map) return;
         glLayer = maplibreGL({
           style,
@@ -205,16 +205,17 @@ export function MapCanvas() {
       let lastPoiKey = "";
       let lastReportKey = "";
       let fittedRoute: string | null = null;
-      let lastNight = useApp.getState().nightMap;
+      let lastBasemap = `${useApp.getState().nightMap ? "n" : "d"}:${useApp.getState().satellite ? "s" : "v"}`;
 
       const apply = (s: ReturnType<typeof useApp.getState>) => {
         if (!map || !tilesReady) return;
 
-        map.getContainer().classList.toggle("is-night", s.nightMap);
-        if (s.nightMap !== lastNight) {
-          lastNight = s.nightMap;
+        map.getContainer().classList.toggle("is-night", s.nightMap && !s.satellite);
+        const basemap = `${s.nightMap ? "n" : "d"}:${s.satellite ? "s" : "v"}`;
+        if (basemap !== lastBasemap) {
+          lastBasemap = basemap;
           if (glLayer) {
-            void loadEnglishBasemap(s.nightMap)
+            void loadEnglishBasemap(s.nightMap, s.satellite)
               .then((style) => glLayer?.getMaplibreMap().setStyle(style))
               .catch(() => {
                 /* keep current basemap */

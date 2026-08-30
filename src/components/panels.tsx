@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Bus,
   Camera,
+  Car,
   CloudRain,
   Construction,
   Fuel,
   MapPin,
   ParkingCircle,
+  PersonStanding,
   Scale,
   Shield,
   Siren,
   TimerReset,
   TrafficCone,
+  Truck,
   Utensils,
   Wrench,
   Wifi,
@@ -29,6 +33,7 @@ import { Logo } from "@/components/logo";
 import {
   AMENITY_LABEL,
   REPORT_META,
+  TRAVEL_MODES,
   TRUCK_CLASSES,
 } from "@/lib/data";
 import {
@@ -43,7 +48,7 @@ import {
 import { startGps } from "@/lib/gps";
 import { geocodePlaces } from "@/lib/routing";
 import { formatDiesel, formatHeight, formatHms, formatMi, formatWeight } from "@/lib/format";
-import type { Amenity, Place, ReportKind } from "@/lib/types";
+import type { Amenity, Place, ReportKind, TravelMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const AMENITY_ICON: Record<Amenity, typeof Fuel> = {
@@ -109,7 +114,7 @@ export function SearchPanel() {
       open={overlay === "search"}
       onClose={() => setOverlay("none")}
       title="Where to"
-      subtitle="Any city on earth — truck-legal highways from your GPS"
+      subtitle="Any city — routed as truck, car, bus, or walk"
     >
       <Input
         autoFocus={overlay === "search"}
@@ -234,6 +239,13 @@ export function ReportPanel() {
   );
 }
 
+const MODE_ICON: Record<TravelMode, typeof Truck> = {
+  truck: Truck,
+  car: Car,
+  bus: Bus,
+  walk: PersonStanding,
+};
+
 export function LayersPanel() {
   const overlay = useApp((s) => s.overlay);
   const setOverlay = useApp((s) => s.setOverlay);
@@ -243,6 +255,10 @@ export function LayersPanel() {
   const setAvoidTolls = useApp((s) => s.setAvoidTolls);
   const nightMap = useApp((s) => s.nightMap);
   const setNightMap = useApp((s) => s.setNightMap);
+  const satellite = useApp((s) => s.satellite);
+  const setSatellite = useApp((s) => s.setSatellite);
+  const travelMode = useApp((s) => s.travelMode);
+  const setTravelMode = useApp((s) => s.setTravelMode);
   const voiceOn = useApp((s) => s.voiceOn);
   const setVoice = useApp((s) => s.setVoice);
 
@@ -259,8 +275,31 @@ export function LayersPanel() {
       open={overlay === "layers"}
       onClose={() => setOverlay("none")}
       title="Map"
-      subtitle="What you see in the cab"
+      subtitle="How you travel and what you see"
     >
+      <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">Travel mode</p>
+      <div className="grid grid-cols-4 gap-2">
+        {TRAVEL_MODES.map((m) => {
+          const Icon = MODE_ICON[m.id];
+          const on = travelMode === m.id;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setTravelMode(m.id)}
+              className={cn(
+                "flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl px-1 py-3 text-xs font-medium shadow-border transition-colors",
+                on ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground hover:bg-accent",
+              )}
+              aria-pressed={on}
+            >
+              <Icon className="size-5" />
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+      <Separator className="my-3" />
       <div className="flex flex-col gap-1">
         {rows.map((row) => (
           <label
@@ -278,17 +317,24 @@ export function LayersPanel() {
       <Separator className="my-3" />
       <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">
         <span>
+          <span className="block font-medium">Satellite</span>
+          <span className="block text-sm text-muted-foreground">Aerial photo with English labels</span>
+        </span>
+        <Switch checked={satellite} onCheckedChange={setSatellite} />
+      </label>
+      <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">
+        <span>
           <span className="block font-medium">Avoid tolls</span>
-          <span className="block text-sm text-muted-foreground">Stay off paid highways when a free truck route exists</span>
+          <span className="block text-sm text-muted-foreground">Stay off paid highways when a free route exists</span>
         </span>
         <Switch checked={avoidTolls} onCheckedChange={setAvoidTolls} />
       </label>
       <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">
         <span>
           <span className="block font-medium">Night map</span>
-          <span className="block text-sm text-muted-foreground">Dark cab tiles</span>
+          <span className="block text-sm text-muted-foreground">Dark street tiles</span>
         </span>
-        <Switch checked={nightMap} onCheckedChange={setNightMap} />
+        <Switch checked={nightMap} onCheckedChange={setNightMap} disabled={satellite} />
       </label>
       <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">
         <span>

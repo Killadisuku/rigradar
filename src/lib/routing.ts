@@ -1,5 +1,5 @@
 import { plotOrsRoute } from "./ors";
-import type { Instruction, LatLng, Place, Restriction, Route, TruckProfile } from "./types";
+import type { Instruction, LatLng, Place, Restriction, Route, TravelMode, TruckProfile } from "./types";
 import { densify, haversine, pathLength } from "./geo";
 
 type PhotonFeature = {
@@ -87,9 +87,15 @@ function turnLine(step: OsrmStep): { primary: string; secondary: string } {
   return { primary: action.replace(/^\w/, (c) => c.toUpperCase()), secondary: name };
 }
 
-export async function fetchDrivingRoute(from: LatLng, to: Place, signal?: AbortSignal): Promise<Route | null> {
+export async function fetchDrivingRoute(
+  from: LatLng,
+  to: Place,
+  signal?: AbortSignal,
+  mode: TravelMode = "car",
+): Promise<Route | null> {
+  const profile = mode === "walk" ? "foot" : "driving";
   const url =
-    `https://router.project-osrm.org/route/v1/driving/` +
+    `https://router.project-osrm.org/route/v1/${profile}/` +
     `${from.lng},${from.lat};${to.coord.lng},${to.coord.lat}` +
     `?overview=full&geometries=geojson&steps=true`;
   const res = await fetch(url, { signal });
@@ -131,7 +137,7 @@ export async function fetchDrivingRoute(from: LatLng, to: Place, signal?: AbortS
     polyline,
     distanceMi,
     durationMin,
-    highways: highways.length ? highways : ["Highway"],
+    highways: highways.length ? highways : [mode === "walk" ? "Walking" : "Highway"],
     restrictions: [],
     traffic: [],
     instructions,
@@ -212,6 +218,7 @@ async function fetchBrouterRoute(
   signal?: AbortSignal,
   avoidTolls = false,
   nogos = "",
+  mode: TravelMode = "truck",
 ): Promise<Route | null> {
   const extra = [
     avoidTolls ? "avoid_toll=true" : "",
@@ -219,9 +226,10 @@ async function fetchBrouterRoute(
   ]
     .filter(Boolean)
     .join("&");
+  const brProfile = mode === "walk" ? "hiking" : "car-fast";
   const url =
     `https://brouter.de/brouter?lonlats=${from.lng},${from.lat}|${to.coord.lng},${to.coord.lat}` +
-    `&profile=car-fast&alternativeidx=0&format=geojson${extra ? `&${extra}` : ""}`;
+    `&profile=${brProfile}&alternativeidx=0&format=geojson${extra ? `&${extra}` : ""}`;
   const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
   if (!res.ok) return null;
   const data = (await res.json()) as {
@@ -308,7 +316,7 @@ async function fetchBrouterRoute(
     const block = tollNogos(tagRows);
     if (block) {
       try {
-        const rerouted = await fetchBrouterRoute(from, to, profile, signal, true, block);
+        const rerouted = await fetchBrouterRoute(from, to, profile, signal, true, block, mode);
         if (rerouted) return rerouted;
       } catch {
         /* keep this route and flag tolls */
@@ -331,11 +339,12 @@ async function fetchBrouterRoute(
   };
 }
 
-export async function fetchTruckRoute(
+export async function fetchNavRoute(
   from: LatLng,
   to: Place,
   profile: TruckProfile,
   avoidTolls = false,
+  mode: TravelMode = "truck",
   signal?: AbortSignal,
 ): Promise<Route | null> {
   const miles = haversine(from, to.coord);
@@ -345,11 +354,12 @@ export async function fetchTruckRoute(
       data: {
         from,
         to: { id: to.id, name: to.name, lat: to.coord.lat, lng: to.coord.lng },
+        mode,
         heightFt: profile.heightFt,
         weightLbs: profile.weightLbs,
         lengthFt: profile.lengthFt,
         hazmat: profile.hazmat,
-        avoidTolls,
+        avoidTolls: mode === "walk" ? false : avoidTolls,
       },
     });
     if (ors) return ors;
@@ -357,13 +367,13 @@ export async function fetchTruckRoute(
     /* fall through */
   }
   if (signal?.aborted) return null;
-  if (miles < 120 || avoidTolls) {
+  if (miles < 120 || avoidTolls || mode === "walk") {
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
     signal?.addEventListener("abort", onAbort);
     const timer = setTimeout(() => ctrl.abort(), 16000);
     try {
-      const truck = await fetchBrouterRoute(from, to, profile, ctrl.signal, avoidTolls);
+      const truck = await fetchBrouterRoute(from, to, profile, ctrl.signal, avoidTolls, "", mode);
       if (truck) return truck;
     } catch {
       /* OSRM fallback */
@@ -372,19 +382,19 @@ export async function fetchTruckRoute(
       signal?.removeEventListener("abort", onAbort);
     }
   }
-  const osrm = await fetchDrivingRoute(from, to, signal);
+  const osrm = await fetchDrivingRoute(from, to, signal, mode);
   if (osrm) {
     return {
       ...osrm,
-      id: `truck-${to.id}`,
+      id: `${mode}-${to.id}`,
       highways: osrm.highways,
-      restrictions: avoidTolls
+      restrictions: avoidTolls && mode !== "walk"
         ? [...osrm.restrictions, { atMi: 0, type: "weight", label: "Toll-free routing unavailable on this stretch" }]
         : osrm.restrictions,
     };
   }
   try {
-    return await fetchBrouterRoute(from, to, profile, signal, avoidTolls);
+    return await fetchBrouterRoute(from, to, profile, signal, avoidTolls, "", mode);
   } catch {
     return null;
   }

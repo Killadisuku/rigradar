@@ -9,6 +9,7 @@ import type {
   Route,
   TrafficZone,
   TruckClass,
+  TravelMode,
 } from "./types";
 import { densify, pathLength } from "./geo";
 
@@ -22,6 +23,13 @@ export const TRUCK_CLASSES: { id: TruckClass; label: string; blurb: string }[] =
   { id: "flatbed", label: "Flatbed", blurb: "Open deck, straps & tarps" },
   { id: "tanker", label: "Tanker", blurb: "Liquid bulk" },
   { id: "box", label: "Box truck", blurb: "26' straight truck" },
+];
+
+export const TRAVEL_MODES: { id: TravelMode; label: string; hint: string }[] = [
+  { id: "truck", label: "Truck", hint: "HGV highways" },
+  { id: "car", label: "Car", hint: "Regular roads" },
+  { id: "bus", label: "Bus", hint: "City streets" },
+  { id: "walk", label: "Walk", hint: "Footpaths" },
 ];
 
 export const PLACES: Place[] = [

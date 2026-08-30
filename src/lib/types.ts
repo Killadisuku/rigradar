@@ -13,6 +13,8 @@ export type GpsFix = {
 
 export type TruckClass = "semi" | "box" | "flatbed" | "tanker" | "reefer";
 
+export type TravelMode = "truck" | "car" | "bus" | "walk";
+
 export type TruckProfile = {
   class: TruckClass;
   heightFt: number;

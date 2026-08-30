@@ -14,6 +14,7 @@ import { startGps } from "@/lib/gps";
 
 export function AppShell() {
   const [client, setClient] = useState(false);
+  const satellite = useApp((s) => s.satellite);
 
   useEffect(() => {
     setClient(true);
@@ -57,7 +58,7 @@ export function AppShell() {
         <MapCanvas />
       </div>
       <p className="pointer-events-none absolute bottom-36 left-3 z-10 text-xs text-muted-foreground md:bottom-4">
-        © OpenStreetMap
+        © {satellite ? "Esri · OpenStreetMap" : "OpenStreetMap"}
       </p>
       <Hud />
       {client ? (
