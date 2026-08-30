@@ -8,10 +8,23 @@ import {
 } from "@/lib/store";
 import { pointAlong } from "@/lib/geo";
 
-const DARK = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const LIGHT = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
+const DARK_BASE = `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
+const DARK_REF = `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`;
+const LIGHT_BASE = `${ESRI}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
+const LIGHT_REF = `${ESRI}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`;
 
 type LNS = typeof import("leaflet");
+
+function addBasemap(L: LNS, map: LeafletMap, night: boolean): TileLayer[] {
+  const opts = { maxZoom: 16, maxNativeZoom: 16 };
+  const layers = [
+    L.tileLayer(night ? DARK_BASE : LIGHT_BASE, opts),
+    L.tileLayer(night ? DARK_REF : LIGHT_REF, { ...opts, opacity: 0.95 }),
+  ];
+  for (const layer of layers) layer.addTo(map);
+  return layers;
+}
 
 function truckIcon(L: LNS, heading: number) {
   return L.divIcon({
@@ -81,7 +94,7 @@ export function MapCanvas() {
     let cancelled = false;
     let map: LeafletMap | null = null;
     let unsub: (() => void) | undefined;
-    let tiles: TileLayer | null = null;
+    let tiles: TileLayer[] = [];
 
     void (async () => {
       const mod = await import("leaflet");
@@ -99,10 +112,7 @@ export function MapCanvas() {
       });
 
       const night = useApp.getState().nightMap;
-      tiles = L.tileLayer(night ? DARK : LIGHT, {
-        maxZoom: 18,
-        subdomains: "abcd",
-      }).addTo(map);
+      tiles = addBasemap(L, map, night);
 
       const routeCasing: Polyline = L.polyline([], {
         color: "#06221e",
@@ -156,14 +166,11 @@ export function MapCanvas() {
       let fittedRoute: string | null = null;
 
       const apply = (s: ReturnType<typeof useApp.getState>) => {
-        if (!map || !tiles) return;
+        if (!map) return;
 
         if (s.nightMap !== lastNight) {
-          tiles.remove();
-          tiles = L.tileLayer(s.nightMap ? DARK : LIGHT, {
-            maxZoom: 18,
-            subdomains: "abcd",
-          }).addTo(map);
+          for (const t of tiles) t.remove();
+          tiles = addBasemap(L, map, s.nightMap);
           lastNight = s.nightMap;
         }
 
