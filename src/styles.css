@@ -130,6 +130,14 @@
   height: 100%;
 }
 
+.leaflet-container.is-night .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) saturate(0.45) brightness(0.9) contrast(1.05);
+}
+
+.leaflet-container:not(.is-night) {
+  background: #cfd4da;
+}
+
 .leaflet-control-attribution {
   display: none;
 }

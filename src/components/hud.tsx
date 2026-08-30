@@ -18,14 +18,15 @@ import { Logo } from "@/components/logo";
 import {
   currentInstruction,
   getPosition,
-  isScaleOpen,
   nearbyFacilities,
   nextInstruction,
   remainingMin,
   reportsOnRoute,
+  resolvePlace,
+  resolveRoute,
   useApp,
 } from "@/lib/store";
-import { placeById, POSTED_LIMIT, routeById } from "@/lib/data";
+import { POSTED_LIMIT } from "@/lib/data";
 import { arrivalClock, formatDiesel, formatEta, formatHms, formatMi, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +49,7 @@ function TopChrome() {
   const voiceOn = useApp((s) => s.voiceOn);
   const setVoice = useApp((s) => s.setVoice);
   const stopNav = useApp((s) => s.stopNav);
-  const route = nav.routeId ? routeById(nav.routeId) : undefined;
+  const route = resolveRoute(nav.routeId);
   const ins = route ? currentInstruction(route, nav.traveledMi) : null;
   const next = route ? nextInstruction(route, nav.traveledMi) : null;
   const distToNext = next ? next.atMi - nav.traveledMi : route ? route.distanceMi - nav.traveledMi : 0;
@@ -206,10 +207,11 @@ function Dock() {
   const setOverlay = useApp((s) => s.setOverlay);
   const startNav = useApp((s) => s.startNav);
   const stopNav = useApp((s) => s.stopNav);
+  const originLabel = useApp((s) => s.originLabel);
   const pos = getPosition();
   const near = nearbyFacilities(pos.coord, 1)[0];
-  const dest = nav.destId ? placeById(nav.destId) : undefined;
-  const route = nav.routeId ? routeById(nav.routeId) : undefined;
+  const dest = resolvePlace(nav.destId);
+  const route = resolveRoute(nav.routeId);
 
   if (overlay !== "none" && overlay !== "report") return null;
 
@@ -246,7 +248,9 @@ function Dock() {
               <p className="font-display text-2xl leading-none font-semibold tracking-tight">{dest.name}</p>
               <p className="mt-1 truncate text-sm text-muted-foreground">{route.highways.join(" · ")}</p>
             </div>
-            <Badge variant={legal ? "ok" : "warn"}>{legal ? "Truck-legal" : "Check clearance"}</Badge>
+            <Badge variant={legal ? "ok" : "warn"}>
+              {route.id.startsWith("live-") ? "Live roads" : legal ? "Truck-legal" : "Check clearance"}
+            </Badge>
           </div>
           <div className="mt-4 grid grid-cols-3 gap-2">
             <Stat label="ETA" value={formatEta(eta)} />
@@ -305,7 +309,7 @@ function Dock() {
           <Logo className="size-9" />
           <div className="min-w-0">
             <p className="font-display text-xl leading-none font-semibold tracking-tight">RigRadar</p>
-            <p className="mt-1 truncate text-sm text-muted-foreground">Demo GPS · I-35E & I-20 · Dallas</p>
+            <p className="mt-1 truncate text-sm text-muted-foreground">Demo GPS · {originLabel}</p>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">

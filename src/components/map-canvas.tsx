@@ -1,30 +1,18 @@
 import { useEffect, useRef } from "react";
 import type { Circle, LayerGroup, Map as LeafletMap, Marker, Polyline, TileLayer } from "leaflet";
-import { FACILITIES, ORIGIN, REPORT_META, routeById } from "@/lib/data";
+import { FACILITIES, REPORT_META } from "@/lib/data";
 import { slicePath } from "@/lib/geo";
 import {
   getReports,
+  resolveRoute,
   useApp,
 } from "@/lib/store";
 import { pointAlong } from "@/lib/geo";
 
-const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
-const DARK_BASE = `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
-const DARK_REF = `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`;
-const LIGHT_BASE = `${ESRI}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
-const LIGHT_REF = `${ESRI}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`;
+const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ESRI_STREET = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
 
 type LNS = typeof import("leaflet");
-
-function addBasemap(L: LNS, map: LeafletMap, night: boolean): TileLayer[] {
-  const opts = { maxZoom: 16, maxNativeZoom: 16 };
-  const layers = [
-    L.tileLayer(night ? DARK_BASE : LIGHT_BASE, opts),
-    L.tileLayer(night ? DARK_REF : LIGHT_REF, { ...opts, opacity: 0.95 }),
-  ];
-  for (const layer of layers) layer.addTo(map);
-  return layers;
-}
 
 function truckIcon(L: LNS, heading: number) {
   return L.divIcon({
@@ -87,6 +75,11 @@ function trafficColor(level: string): string {
 
 export function MapCanvas() {
   const rootRef = useRef<HTMLDivElement>(null);
+  const nightMap = useApp((s) => s.nightMap);
+
+  useEffect(() => {
+    rootRef.current?.classList.toggle("is-night", nightMap);
+  }, [nightMap]);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -94,25 +87,46 @@ export function MapCanvas() {
     let cancelled = false;
     let map: LeafletMap | null = null;
     let unsub: (() => void) | undefined;
-    let tiles: TileLayer[] = [];
+    let tiles: TileLayer | null = null;
 
     void (async () => {
       const mod = await import("leaflet");
       const L = ((mod as { default?: LNS }).default ?? (mod as unknown as LNS)) as LNS;
       if (cancelled || !rootRef.current) return;
 
+      await new Promise<void>((resolve) => {
+        const api = useApp.persist;
+        if (api.hasHydrated()) {
+          resolve();
+          return;
+        }
+        api.onFinishHydration(() => resolve());
+      });
+      if (cancelled || !rootRef.current) return;
+      const start = useApp.getState().origin;
       map = L.map(rootRef.current, {
         zoomControl: false,
         attributionControl: false,
-        center: [ORIGIN.lat, ORIGIN.lng],
+        center: [start.lat, start.lng],
         zoom: 12,
-        minZoom: 6,
-        maxZoom: 16,
+        minZoom: 5,
+        maxZoom: 18,
         zoomSnap: 0.5,
       });
+      rootRef.current.classList.toggle("is-night", useApp.getState().nightMap);
 
-      const night = useApp.getState().nightMap;
-      tiles = addBasemap(L, map, night);
+      const osm = L.tileLayer(OSM, {
+        maxZoom: 19,
+        maxNativeZoom: 19,
+      });
+      let fellBack = false;
+      osm.on("tileerror", () => {
+        if (fellBack || !map) return;
+        fellBack = true;
+        osm.remove();
+        tiles = L.tileLayer(ESRI_STREET, { maxZoom: 16, maxNativeZoom: 16 }).addTo(map);
+      });
+      tiles = osm.addTo(map);
 
       const routeCasing: Polyline = L.polyline([], {
         color: "#06221e",
@@ -140,12 +154,12 @@ export function MapCanvas() {
       const reportGroup: LayerGroup = L.layerGroup().addTo(map);
       const convoyGroup: LayerGroup = L.layerGroup().addTo(map);
 
-      const truck: Marker = L.marker([ORIGIN.lat, ORIGIN.lng], {
+      const truck: Marker = L.marker([start.lat, start.lng], {
         icon: truckIcon(L, 175),
         zIndexOffset: 1200,
         keyboard: false,
       }).addTo(map);
-      const accuracy: Circle = L.circle([ORIGIN.lat, ORIGIN.lng], {
+      const accuracy: Circle = L.circle([start.lat, start.lng], {
         radius: 110,
         color: "#3ecfbe",
         weight: 1,
@@ -159,22 +173,31 @@ export function MapCanvas() {
         useApp.getState().setFollow(false);
       });
 
-      let lastNight = night;
+      let lastOriginKey = `${start.lat.toFixed(4)},${start.lng.toFixed(4)}`;
       let lastRouteKey = "";
       let lastPoiKey = "";
       let lastReportKey = "";
       let fittedRoute: string | null = null;
 
       const apply = (s: ReturnType<typeof useApp.getState>) => {
-        if (!map) return;
+        if (!map || !tiles) return;
 
-        if (s.nightMap !== lastNight) {
-          for (const t of tiles) t.remove();
-          tiles = addBasemap(L, map, s.nightMap);
-          lastNight = s.nightMap;
+        map.getContainer().classList.toggle("is-night", s.nightMap);
+
+        const originKey = `${s.origin.lat.toFixed(4)},${s.origin.lng.toFixed(4)}`;
+        if (originKey !== lastOriginKey) {
+          lastOriginKey = originKey;
+          const recenter = () => {
+            if (!map) return;
+            map.invalidateSize();
+            map.setView([s.origin.lat, s.origin.lng], 13, { animate: false });
+          };
+          recenter();
+          window.setTimeout(recenter, 80);
+          window.setTimeout(recenter, 420);
         }
 
-        const route = s.nav.routeId ? routeById(s.nav.routeId) : undefined;
+        const route = resolveRoute(s.nav.routeId);
         const showRoute = Boolean(route && (s.nav.preview || s.nav.active || s.nav.arrived));
         const routeKey = `${s.nav.routeId}:${showRoute}:${s.layers.traffic}:${s.nav.active}`;
         if (routeKey !== lastRouteKey) {
@@ -218,7 +241,7 @@ export function MapCanvas() {
 
         const pos = route
           ? pointAlong(route.polyline, s.nav.traveledMi)
-          : { pos: ORIGIN, heading: 175 };
+          : { pos: s.origin, heading: 175 };
         truck.setLatLng([pos.pos.lat, pos.pos.lng]);
         const rot = truck.getElement()?.querySelector(".rig-marker-rot") as HTMLElement | null;
         if (rot) rot.style.transform = `rotate(${pos.heading}deg)`;
@@ -228,7 +251,7 @@ export function MapCanvas() {
           map.setView([pos.pos.lat, pos.pos.lng], Math.max(map.getZoom(), 12), { animate: false });
         }
 
-        const poiKey = `${s.layers.stops}:${s.layers.rest}:${s.layers.scales}:${s.selectedFacilityId}`;
+        const poiKey = `${s.layers.stops}:${s.layers.rest}:${s.layers.scales}:${s.selectedFacilityId}:${originKey}`;
         if (poiKey !== lastPoiKey) {
           lastPoiKey = poiKey;
           poiGroup.clearLayers();
@@ -299,5 +322,5 @@ export function MapCanvas() {
     };
   }, []);
 
-  return <div ref={rootRef} className="absolute inset-0 z-0" />;
+  return <div ref={rootRef} className={`absolute inset-0 z-0${nightMap ? " is-night" : ""}`} />;
 }

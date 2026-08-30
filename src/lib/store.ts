@@ -16,16 +16,19 @@ import type {
 import {
   FACILITIES,
   ORIGIN,
+  ORIGIN_CITY,
+  ORIGIN_LABEL,
   PLACES,
   POSTED_LIMIT,
   REPORT_META,
   ROUTE_BY_DEST,
-  ROUTES,
   SEED_REPORTS,
-  routeById,
+  placeById,
+  routeById as cannedRouteById,
 } from "./data";
 import { distToPath, haversine, offset, pointAlong, trafficAt } from "./geo";
 import { formatMi } from "./format";
+import { fetchDrivingRoute } from "./routing";
 import { resetVoice, speak } from "./voice";
 
 const DEFAULT_PROFILE: TruckProfile = {
@@ -64,15 +67,17 @@ const DEFAULT_NAV: NavState = {
   arrived: false,
 };
 
+const HOME_LABEL = `${ORIGIN_LABEL} · ${ORIGIN_CITY}`;
+
 let convoyClock = 0;
 
-function seedConvoy(): ConvoyTruck[] {
+function seedConvoy(origin = ORIGIN): ConvoyTruck[] {
   const hubs = [
-    ORIGIN,
-    { lat: 32.76, lng: -96.8 },
-    { lat: 32.75, lng: -97.2 },
-    { lat: 32.4, lng: -96.89 },
-    { lat: 32.55, lng: -96.7 },
+    origin,
+    offset(origin, 5, 2),
+    offset(origin, 4, -22),
+    offset(origin, -20, -4),
+    offset(origin, -10, 9),
   ];
   return Array.from({ length: 14 }, (_, i) => {
     const hub = hubs[i % hubs.length]!;
@@ -95,6 +100,11 @@ function scaleOpen(id: string, now = Date.now()): boolean {
   return (hour + id.length) % 3 !== 0;
 }
 
+function lookupRoute(id: string | null, extra: Record<string, Route>): Route | undefined {
+  if (!id) return undefined;
+  return extra[id] ?? cannedRouteById(id);
+}
+
 type AppState = {
   profile: TruckProfile;
   layers: Layers;
@@ -103,6 +113,10 @@ type AppState = {
   overlay: Overlay;
   seenOnboard: boolean;
   extraReports: Report[];
+  extraPlaces: Place[];
+  extraRoutes: Record<string, Route>;
+  origin: { lat: number; lng: number };
+  originLabel: string;
   hos: HosState;
   nav: NavState;
   convoy: ConvoyTruck[];
@@ -117,6 +131,8 @@ type AppState = {
   completeOnboard: () => void;
   setFollow: (on: boolean) => void;
   previewDestination: (placeId: string) => void;
+  goToPlace: (place: Place) => void;
+  relocate: (coord: { lat: number; lng: number }, label: string) => void;
   startNav: () => void;
   stopNav: () => void;
   tick: (dtSec: number) => void;
@@ -138,9 +154,13 @@ export const useApp = create<AppState>()(
       overlay: "none",
       seenOnboard: false,
       extraReports: [],
+      extraPlaces: [],
+      extraRoutes: {},
+      origin: ORIGIN,
+      originLabel: HOME_LABEL,
       hos: { ...DEFAULT_HOS },
       nav: { ...DEFAULT_NAV },
-      convoy: seedConvoy(),
+      convoy: seedConvoy(ORIGIN),
       selectedFacilityId: null,
       alert: null,
       alertKey: null,
@@ -155,6 +175,17 @@ export const useApp = create<AppState>()(
       setOverlay: (o) => set({ overlay: o }),
       completeOnboard: () => set({ seenOnboard: true, overlay: "none" }),
       setFollow: (on) => set({ nav: { ...get().nav, follow: on } }),
+
+      relocate: (coord, label) => {
+        resetVoice();
+        set({
+          origin: coord,
+          originLabel: label,
+          convoy: seedConvoy(coord),
+          nav: { ...DEFAULT_NAV },
+          selectedFacilityId: null,
+        });
+      },
 
       previewDestination: (placeId) => {
         const routeId = ROUTE_BY_DEST[placeId];
@@ -176,10 +207,75 @@ export const useApp = create<AppState>()(
         });
       },
 
+      goToPlace: (place) => {
+        const canned = ROUTE_BY_DEST[place.id];
+        if (canned) {
+          get().previewDestination(place.id);
+          return;
+        }
+        const origin = get().origin;
+        const miles = haversine(origin, place.coord);
+        const extraPlaces = [
+          place,
+          ...get().extraPlaces.filter((p) => p.id !== place.id),
+        ].slice(0, 40);
+
+        if (miles > 280) {
+          resetVoice();
+          set({
+            origin: place.coord,
+            originLabel: place.name,
+            convoy: seedConvoy(place.coord),
+            extraPlaces,
+            overlay: "none",
+            selectedFacilityId: null,
+            nav: { ...DEFAULT_NAV },
+            alert: `Cab is now in ${place.name}. Search a nearby destination to run the roads.`,
+            alertKey: `reloc-${place.id}`,
+          });
+          speak(`Now in ${place.name}.`, get().voiceOn);
+          return;
+        }
+
+        set({
+          extraPlaces,
+          overlay: "none",
+          alert: `Plotting route to ${place.name}…`,
+          alertKey: `plot-${place.id}`,
+        });
+        void fetchDrivingRoute(origin, place)
+          .then((route) => {
+            if (!route) throw new Error("no route");
+            resetVoice();
+            set({
+              extraRoutes: { ...get().extraRoutes, [route.id]: route },
+              alert: null,
+              alertKey: null,
+              selectedFacilityId: null,
+              nav: {
+                ...DEFAULT_NAV,
+                preview: true,
+                destId: place.id,
+                routeId: route.id,
+                follow: false,
+                speedMph: 0,
+              },
+            });
+          })
+          .catch(() => {
+            get().relocate(place.coord, place.name);
+            set({
+              overlay: "none",
+              alert: `No through-route from here. Moved you to ${place.name}.`,
+              alertKey: `reloc-${place.id}`,
+            });
+          });
+      },
+
       startNav: () => {
-        const { nav, voiceOn } = get();
+        const { nav, voiceOn, extraRoutes } = get();
         if (!nav.routeId) return;
-        const route = routeById(nav.routeId);
+        const route = lookupRoute(nav.routeId, extraRoutes);
         if (!route) return;
         resetVoice();
         const first = route.instructions[0];
@@ -208,7 +304,7 @@ export const useApp = create<AppState>()(
       },
 
       tick: (dtSec) => {
-        const { nav, hos, convoy, voiceOn, layers, profile } = get();
+        const { nav, hos, convoy, voiceOn, layers, profile, extraRoutes } = get();
         convoyClock += dtSec;
         const pulseConvoy = convoyClock >= 0.2;
         if (pulseConvoy) convoyClock = 0;
@@ -234,7 +330,7 @@ export const useApp = create<AppState>()(
           if (pulseConvoy && layers.convoy) set({ convoy: nextConvoy });
           return;
         }
-        const route = routeById(nav.routeId);
+        const route = lookupRoute(nav.routeId, extraRoutes);
         if (!route) return;
 
         const level = trafficAt(route.traffic, nav.traveledMi);
@@ -387,6 +483,8 @@ export const useApp = create<AppState>()(
         seenOnboard: s.seenOnboard,
         extraReports: s.extraReports,
         hos: s.hos,
+        origin: s.origin,
+        originLabel: s.originLabel,
       }),
     },
   ),
@@ -409,20 +507,27 @@ export function nextInstruction(route: Route, traveledMi: number) {
   return route.instructions.find((ins) => ins.atMi > traveledMi + 0.15) ?? null;
 }
 
+export function resolveRoute(id: string | null): Route | undefined {
+  return lookupRoute(id, useApp.getState().extraRoutes);
+}
+
+export function resolvePlace(id: string | null): Place | undefined {
+  if (!id) return undefined;
+  return useApp.getState().extraPlaces.find((p) => p.id === id) ?? placeById(id);
+}
+
 export function getPosition(): { coord: ReturnType<typeof pointAlong>["pos"]; heading: number; highway: string } {
-  const { nav } = useApp.getState();
+  const { nav, origin, extraRoutes, originLabel } = useApp.getState();
   if (nav.routeId) {
-    const route = routeById(nav.routeId);
+    const route = lookupRoute(nav.routeId, extraRoutes);
     if (route) {
       const p = pointAlong(route.polyline, nav.traveledMi);
       const ins = currentInstruction(route, nav.traveledMi);
       return { coord: p.pos, heading: p.heading, highway: ins?.secondary.split("·")[0]?.trim() ?? route.highways[0] ?? "Local" };
     }
   }
-  return { coord: ORIGIN, heading: 175, highway: ORIGIN_LABEL_HWY };
+  return { coord: origin, heading: 175, highway: originLabel };
 }
-
-const ORIGIN_LABEL_HWY = "I-35E";
 
 export function remainingMin(route: Route, traveledMi: number, speedMph: number): number {
   const left = Math.max(0, route.distanceMi - traveledMi);
@@ -432,6 +537,7 @@ export function remainingMin(route: Route, traveledMi: number, speedMph: number)
 
 export function nearbyFacilities(coord: { lat: number; lng: number }, limit = 8): (Facility & { distanceMi: number })[] {
   return FACILITIES.map((f) => ({ ...f, distanceMi: haversine(coord, f.coord) }))
+    .filter((f) => f.distanceMi < 280)
     .sort((a, b) => a.distanceMi - b.distanceMi)
     .slice(0, limit);
 }
@@ -475,4 +581,4 @@ export function isScaleOpen(id: string): boolean {
   return scaleOpen(id);
 }
 
-export { POSTED_LIMIT, PLACES, FACILITIES, ROUTES, ROUTE_BY_DEST };
+export { POSTED_LIMIT, PLACES, FACILITIES, ROUTE_BY_DEST };
