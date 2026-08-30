@@ -10,3 +10,6 @@ dist
 .DS_Store
 .node_modules.lock
 .project_id
+.env
+.env.*
+!.env.example

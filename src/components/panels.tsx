@@ -519,7 +519,7 @@ export function OnboardPanel() {
         <div>
           <p className="font-display text-3xl font-semibold tracking-tight">RigRadar</p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Truck-legal routing, live reports, fuel, scales, and HOS — built for the cab.
+            Truck-legal routing on the live map — built for the cab.
           </p>
         </div>
         <ul className="flex flex-col gap-2 text-sm">
@@ -535,6 +535,7 @@ export function OnboardPanel() {
             completeOnboard();
           }}
         >
+          Let's go
         </Button>
       </div>
     </SlidePanel>

@@ -1,3 +1,4 @@
+import { plotOrsRoute } from "./ors";
 import type { Instruction, LatLng, Place, Restriction, Route, TruckProfile } from "./types";
 import { densify, haversine, pathLength } from "./geo";
 
@@ -339,6 +340,23 @@ export async function fetchTruckRoute(
 ): Promise<Route | null> {
   const miles = haversine(from, to.coord);
   if (miles < 0.05) return null;
+  try {
+    const ors = await plotOrsRoute({
+      data: {
+        from,
+        to: { id: to.id, name: to.name, lat: to.coord.lat, lng: to.coord.lng },
+        heightFt: profile.heightFt,
+        weightLbs: profile.weightLbs,
+        lengthFt: profile.lengthFt,
+        hazmat: profile.hazmat,
+        avoidTolls,
+      },
+    });
+    if (ors) return ors;
+  } catch {
+    /* fall through */
+  }
+  if (signal?.aborted) return null;
   if (miles < 120 || avoidTolls) {
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
