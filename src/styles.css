@@ -1,0 +1,319 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", ui-sans-serif, sans-serif;
+
+  --color-background: #090b0e;
+  --color-foreground: #e8eaed;
+  --color-card: #14181f;
+  --color-card-foreground: #e8eaed;
+  --color-popover: #1a1f28;
+  --color-popover-foreground: #e8eaed;
+  --color-primary: #3ecfbe;
+  --color-primary-foreground: #06221e;
+  --color-secondary: #1c222c;
+  --color-secondary-foreground: #e8eaed;
+  --color-muted: #1c222c;
+  --color-muted-foreground: #8b93a7;
+  --color-accent: #222a36;
+  --color-accent-foreground: #e8eaed;
+  --color-destructive: #e05656;
+  --color-border: rgb(232 234 237 / 0.12);
+  --color-input: rgb(232 234 237 / 0.14);
+  --color-ring: #3ecfbe;
+  --color-ok: #3dba7a;
+  --color-warn: #e0a247;
+  --color-danger: #e05656;
+  --color-steel: #8b93a7;
+  --color-report-police: #5b8def;
+  --color-report-crash: #e05656;
+  --color-report-hazard: #e0a247;
+  --color-report-work: #c48a3a;
+  --color-report-slow: #e0a247;
+  --color-report-camera: #8b93a7;
+  --color-report-wx: #6ea8d8;
+  --color-report-closed: #e05656;
+  --color-traffic-clear: #3ecfbe;
+  --color-traffic-light: #7dcf8a;
+  --color-traffic-moderate: #e0a247;
+  --color-traffic-heavy: #e05656;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-2xl: 28px;
+  --radius-3xl: 32px;
+  --radius: 12px;
+
+  --shadow-border: 0 0 0 1px rgb(255 255 255 / 0.08);
+  --shadow-border-hover: 0 0 0 1px rgb(255 255 255 / 0.13);
+  --shadow-dock: 0 -12px 40px rgb(0 0 0 / 0.45);
+
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --default-transition-duration: 150ms;
+}
+
+:root {
+  --motion-stagger: 40ms;
+  --motion-micro: 80ms;
+  --motion-quick: 150ms;
+  --motion-fast: 250ms;
+  --motion-medium: 350ms;
+  --motion-slow: 400ms;
+  --background: #090b0e;
+  --foreground: #e8eaed;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  html {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    background: var(--color-background);
+    color: var(--color-foreground);
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.shadow-border {
+  box-shadow: var(--shadow-border);
+}
+
+.shadow-dock {
+  box-shadow: var(--shadow-dock);
+}
+
+.leaflet-container {
+  background: var(--color-background);
+  font-family: var(--font-sans);
+  width: 100%;
+  height: 100%;
+}
+
+.leaflet-control-attribution {
+  display: none;
+}
+
+.leaflet-popup-content-wrapper {
+  background: var(--color-card);
+  color: var(--color-foreground);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-border);
+  padding: 0;
+}
+
+.leaflet-popup-tip {
+  background: var(--color-card);
+}
+
+.leaflet-popup-content {
+  margin: 10px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.leaflet-popup-close-button {
+  color: var(--color-muted-foreground) !important;
+}
+
+.rig-marker,
+.poi-wrap,
+.convoy-marker,
+.report-wrap {
+  background: none !important;
+  border: none !important;
+}
+
+.rig-marker-rot,
+.convoy-rot {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  transform-origin: 50% 60%;
+}
+
+.rig-marker-shape {
+  width: 0;
+  height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 22px solid var(--color-primary);
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.55));
+}
+
+.convoy-shape {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 14px solid rgb(232 234 237 / 0.72);
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.5));
+}
+
+.poi-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--color-card);
+  box-shadow: var(--shadow-border), 0 4px 12px rgb(0 0 0 / 0.35);
+  color: var(--color-primary);
+}
+
+.poi-badge.is-stop {
+  color: var(--color-primary);
+}
+
+.poi-badge.is-rest {
+  color: var(--color-steel);
+}
+
+.poi-badge.is-scale {
+  color: var(--color-warn);
+}
+
+.poi-badge.is-park {
+  color: var(--color-ok);
+}
+
+.poi-badge.is-sel {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.report-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid var(--color-background);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35);
+}
+
+.report-dot.report-police {
+  background: var(--color-report-police);
+}
+.report-dot.report-crash {
+  background: var(--color-report-crash);
+}
+.report-dot.report-hazard {
+  background: var(--color-report-hazard);
+}
+.report-dot.report-work {
+  background: var(--color-report-work);
+}
+.report-dot.report-slow {
+  background: var(--color-report-slow);
+}
+.report-dot.report-camera {
+  background: var(--color-report-camera);
+}
+.report-dot.report-wx {
+  background: var(--color-report-wx);
+}
+.report-dot.report-closed {
+  background: var(--color-report-closed);
+}
+
+.map-credit {
+  position: absolute;
+  left: 12px;
+  bottom: 0;
+  z-index: 5;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--color-muted-foreground);
+  pointer-events: none;
+}
+
+.rr-panel {
+  transform: translate3d(0, 100%, 0);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    transform 400ms var(--ease-smooth-out),
+    opacity 250ms var(--ease-smooth-out),
+    visibility 250ms;
+}
+
+.rr-panel.is-open {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.rr-scrim {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 200ms var(--ease-out),
+    visibility 200ms;
+}
+
+.rr-scrim.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+@media (min-width: 768px) {
+  .rr-panel {
+    transform: translate3d(-112%, 0, 0);
+  }
+  .rr-panel.is-open {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rr-panel,
+  .rr-dock,
+  .rr-banner,
+  .rr-scrim {
+    transition: none !important;
+  }
+}
