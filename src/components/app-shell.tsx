@@ -9,8 +9,9 @@ import {
   ReportPanel,
   SearchPanel,
 } from "@/components/panels";
-import { useApp } from "@/lib/store";
 import { startGps } from "@/lib/gps";
+import { getReports, useApp } from "@/lib/store";
+import { fetchAreaTraffic } from "@/lib/traffic";
 
 export function AppShell() {
   const [client, setClient] = useState(false);
@@ -37,6 +38,38 @@ export function AppShell() {
       maybeOnboard();
       startGps();
     });
+  }, [client]);
+
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    let last = "";
+    const pull = (coord: { lat: number; lng: number }) => {
+      const key = `${coord.lat.toFixed(2)},${coord.lng.toFixed(2)}`;
+      if (key === last) return;
+      last = key;
+      void fetchAreaTraffic(coord, getReports())
+        .then((flows) => {
+          if (!cancelled && flows.length) useApp.getState().setAreaTraffic(flows);
+        })
+        .catch(() => {
+          /* keep last flows */
+        });
+    };
+    const fallback = window.setTimeout(() => {
+      pull(useApp.getState().gps?.coord ?? useApp.getState().origin);
+    }, 900);
+    const unsub = useApp.subscribe((s) => {
+      if (s.gps) {
+        window.clearTimeout(fallback);
+        pull(s.gps.coord);
+      }
+    });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(fallback);
+      unsub();
+    };
   }, [client]);
 
   useEffect(() => {

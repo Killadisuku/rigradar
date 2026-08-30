@@ -26,6 +26,7 @@ import {
 import { POSTED_LIMIT, TRAVEL_MODES } from "@/lib/data";
 import { startGps } from "@/lib/gps";
 import { arrivalClock, formatEta, formatMi, formatSpeed } from "@/lib/format";
+import { delayMinutes, summarizeLevel, TRAFFIC_LABEL } from "@/lib/traffic";
 import { cn } from "@/lib/utils";
 
 export function Hud() {
@@ -149,10 +150,27 @@ function AlertBanner() {
 function SpeedBubble() {
   const nav = useApp((s) => s.nav);
   const gps = useApp((s) => s.gps);
+  const layers = useApp((s) => s.layers);
+  const areaTraffic = useApp((s) => s.areaTraffic);
   const speed = gps && Date.now() - gps.at < 8000 ? gps.speedMph : nav.active ? nav.speedMph : 0;
   const speeding = speed > POSTED_LIMIT + 2;
+  const route = resolveRoute(nav.routeId);
+  const level = summarizeLevel(
+    areaTraffic,
+    route && (nav.preview || nav.active || nav.arrived) ? route.traffic : [],
+  );
+  const chipReady = areaTraffic.length > 0 || Boolean(route?.traffic.length);
+  const chipTone =
+    level === "heavy"
+      ? "bg-danger text-background"
+      : level === "moderate"
+        ? "bg-warn text-background"
+        : level === "light"
+          ? "bg-ok text-background"
+          : "bg-card text-foreground";
+
   return (
-    <div className="pointer-events-none absolute bottom-56 left-3 md:bottom-8 md:left-4">
+    <div className="pointer-events-none absolute bottom-56 left-3 flex items-end gap-2 md:bottom-8 md:left-4">
       <div
         className={cn(
           "flex size-20 flex-col items-center justify-center rounded-full bg-card shadow-border",
@@ -166,6 +184,14 @@ function SpeedBubble() {
           {POSTED_LIMIT}
         </span>
       </div>
+      {layers.traffic ? (
+        <div
+          data-traffic={areaTraffic.length}
+          className={cn("mb-1 rounded-full px-3 py-1.5 text-xs font-medium shadow-border", chipTone)}
+        >
+          {chipReady ? TRAFFIC_LABEL[level] : "Checking traffic"}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -252,6 +278,8 @@ function Dock() {
     const eta = remainingMin(route, nav.traveledMi, nav.active ? nav.speedMph : 0);
     const onRoute = reportsOnRoute(route).length;
     const legal = route.restrictions.every((r) => r.avoided || r.type !== "low_bridge");
+    const delay = travelMode === "walk" ? 0 : delayMinutes(route.distanceMi, route.durationMin);
+    const routeLevel = summarizeLevel([], route.traffic);
 
     return (
       <div className="rr-dock pointer-events-auto absolute inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:inset-x-auto md:right-4 md:bottom-4 md:w-[420px]">
@@ -288,6 +316,13 @@ function Dock() {
           ) : null}
           {onRoute > 0 && nav.preview ? (
             <p className="mt-2 text-xs text-muted-foreground">{onRoute} live reports on this route</p>
+          ) : null}
+          {delay >= 3 ? (
+            <p className={cn("mt-2 text-xs", routeLevel === "heavy" || routeLevel === "moderate" ? "text-warn" : "text-muted-foreground")}>
+              {delay} min slower · {TRAFFIC_LABEL[routeLevel]}
+            </p>
+          ) : route.traffic.length > 0 ? (
+            <p className="mt-2 text-xs text-muted-foreground">{TRAFFIC_LABEL[routeLevel]} on this route</p>
           ) : null}
           {nav.preview ? (
             <div className="mt-3 grid grid-cols-4 gap-1">

@@ -267,7 +267,7 @@ export function LayersPanel() {
     { key: "rest", label: "Rest areas", hint: "DOT lots" },
     { key: "scales", label: "Weigh stations", hint: "Open / closed" },
     { key: "reports", label: "Community reports", hint: "Police, crashes, hazards" },
-    { key: "traffic", label: "Traffic colors", hint: "On the active route" },
+    { key: "traffic", label: "Traffic colors", hint: "Congestion on roads around you" },
   ];
 
   return (
@@ -313,6 +313,26 @@ export function LayersPanel() {
             <Switch checked={layers[row.key]} onCheckedChange={(v) => setLayers({ [row.key]: v })} />
           </label>
         ))}
+        {layers.traffic ? (
+          <div className="mt-1 mb-2 flex flex-wrap gap-3 px-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-traffic-clear" />
+              Moving
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-traffic-light" />
+              Light
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-traffic-moderate" />
+              Moderate
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-traffic-heavy" />
+              Heavy
+            </span>
+          </div>
+        ) : null}
       </div>
       <Separator className="my-3" />
       <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-3">

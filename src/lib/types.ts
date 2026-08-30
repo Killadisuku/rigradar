@@ -87,6 +87,14 @@ export type TrafficZone = {
   level: TrafficLevel;
 };
 
+export type TrafficFlow = {
+  id: string;
+  level: TrafficLevel;
+  name: string;
+  polyline: LatLng[];
+  highway?: string;
+};
+
 export type Restriction = {
   atMi: number;
   type: "low_bridge" | "weight" | "hazmat" | "weigh_open" | "grade";

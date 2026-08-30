@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { densify, pathLength } from "./geo";
+import { zonesFromSteps } from "./traffic";
 import type { Instruction, LatLng, Restriction, Route, TravelMode } from "./types";
 
 type OrsStep = {
@@ -89,7 +90,7 @@ function toRoute(
     durationMin,
     highways: highways.length ? highways : [mode === "walk" ? "Walking" : mode === "bus" ? "Bus roads" : mode === "car" ? "Roads" : "HGV route"],
     restrictions,
-    traffic: [],
+    traffic: mode === "walk" ? [] : zonesFromSteps(steps.map((s) => ({ distance: Number(s.distance ?? 0), duration: Number(s.duration ?? 0) })), "mi"),
     instructions,
   };
 }

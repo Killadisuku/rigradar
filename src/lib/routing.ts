@@ -1,6 +1,7 @@
 import { plotOrsRoute } from "./ors";
 import type { Instruction, LatLng, Place, Restriction, Route, TravelMode, TruckProfile } from "./types";
 import { densify, haversine, pathLength } from "./geo";
+import { levelForRoad, zonesFromSteps } from "./traffic";
 
 type PhotonFeature = {
   geometry: { coordinates: [number, number] };
@@ -20,6 +21,7 @@ type OsrmStep = {
   name?: string;
   ref?: string;
   distance?: number;
+  duration?: number;
   maneuver?: { type?: string; modifier?: string };
 };
 
@@ -139,7 +141,7 @@ export async function fetchDrivingRoute(
     durationMin,
     highways: highways.length ? highways : [mode === "walk" ? "Walking" : "Highway"],
     restrictions: [],
-    traffic: [],
+    traffic: mode === "walk" ? [] : zonesFromSteps(steps.map((s) => ({ distance: Number(s.distance ?? 0), duration: Number(s.duration ?? 0) })), "m"),
     instructions,
   };
 }
@@ -334,7 +336,24 @@ async function fetchBrouterRoute(
     durationMin,
     highways: highways.length ? highways : ["Truck route"],
     restrictions: restrictions.slice(0, 8),
-    traffic: [],
+    traffic:
+      mode === "walk"
+        ? []
+        : (() => {
+            const zones: { fromMi: number; toMi: number; level: ReturnType<typeof levelForRoad> }[] = [];
+            let acc = 0;
+            let i = 0;
+            while (acc < distanceMi) {
+              const span = Math.min(2.2, distanceMi - acc);
+              const level = levelForRoad(`${to.id}:${i}`, i % 2 === 0 ? "trunk" : "primary");
+              const last = zones[zones.length - 1];
+              if (last && last.level === level) last.toMi = acc + span;
+              else zones.push({ fromMi: acc, toMi: acc + span, level });
+              acc += span;
+              i++;
+            }
+            return zones;
+          })(),
     instructions,
   };
 }

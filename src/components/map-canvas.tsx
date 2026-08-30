@@ -8,6 +8,7 @@ import {
   resolveRoute,
   useApp,
 } from "@/lib/store";
+import { TRAFFIC_COLOR, TRAFFIC_LABEL } from "@/lib/traffic";
 import { pointAlong } from "@/lib/geo";
 
 const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -67,10 +68,18 @@ function reportIcon(L: LNS, kind: string) {
 }
 
 function trafficColor(level: string): string {
-  if (level === "heavy") return getComputedStyle(document.documentElement).getPropertyValue("--color-traffic-heavy").trim() || "#e05656";
-  if (level === "moderate") return "#e0a247";
-  if (level === "light") return "#7dcf8a";
-  return "#3ecfbe";
+  if (level === "heavy") return TRAFFIC_COLOR.heavy;
+  if (level === "moderate") return TRAFFIC_COLOR.moderate;
+  if (level === "light") return TRAFFIC_COLOR.light;
+  return TRAFFIC_COLOR.clear;
+}
+
+function areaWeight(level: string, highway?: string): number {
+  const base = highway?.includes("motorway") ? 6 : highway?.includes("trunk") ? 5 : 4;
+  if (level === "heavy") return base + 2;
+  if (level === "moderate") return base + 1;
+  if (level === "light") return base;
+  return Math.max(3, base - 1);
 }
 
 export function MapCanvas() {
@@ -154,6 +163,7 @@ export function MapCanvas() {
       }
       tilesReady = true;
 
+      const areaGroup: LayerGroup = L.layerGroup().addTo(map);
       const routeCasing: Polyline = L.polyline([], {
         color: "#06221e",
         weight: 10,
@@ -202,6 +212,7 @@ export function MapCanvas() {
 
       let lastOriginKey = `${start.lat.toFixed(3)},${start.lng.toFixed(3)}`;
       let lastRouteKey = "";
+      let lastAreaKey = "";
       let lastPoiKey = "";
       let lastReportKey = "";
       let fittedRoute: string | null = null;
@@ -237,6 +248,39 @@ export function MapCanvas() {
             };
             recenter();
             window.setTimeout(recenter, 80);
+          }
+        }
+
+        const areaKey = `${s.layers.traffic}:${s.areaTraffic.length}:${s.areaTraffic[0]?.id ?? ""}:${s.areaTraffic[0]?.level ?? ""}:${s.areaTraffic[s.areaTraffic.length - 1]?.id ?? ""}`;
+        if (areaKey !== lastAreaKey) {
+          lastAreaKey = areaKey;
+          areaGroup.clearLayers();
+          if (s.layers.traffic) {
+            for (const flow of s.areaTraffic) {
+              if (flow.polyline.length < 2) continue;
+              const latlngs = flow.polyline.map((p) => [p.lat, p.lng] as [number, number]);
+              const weight = areaWeight(flow.level, flow.highway);
+              L.polyline(latlngs, {
+                color: "#06221e",
+                weight: weight + 3,
+                opacity: 0.28,
+                lineJoin: "round",
+                lineCap: "round",
+                interactive: false,
+              }).addTo(areaGroup);
+              const line = L.polyline(latlngs, {
+                color: trafficColor(flow.level),
+                weight,
+                opacity: flow.level === "clear" ? 0.55 : 0.92,
+                lineJoin: "round",
+                lineCap: "round",
+              });
+              line.bindTooltip(`${flow.name} · ${TRAFFIC_LABEL[flow.level]}`, {
+                sticky: true,
+                opacity: 0.95,
+              });
+              line.addTo(areaGroup);
+            }
           }
         }
 

@@ -13,6 +13,7 @@ import type {
   Report,
   ReportKind,
   Route,
+  TrafficFlow,
   TravelMode,
   TruckProfile,
 } from "./types";
@@ -33,6 +34,7 @@ import {
 import { distToPath, haversine, offset, pointAlong, snapToPath, trafficAt } from "./geo";
 import { formatMi } from "./format";
 import { fetchNavRoute } from "./routing";
+import { fetchAreaTraffic } from "./traffic";
 import { resetVoice, speak } from "./voice";
 
 const DEFAULT_PROFILE: TruckProfile = {
@@ -124,6 +126,7 @@ type AppState = {
   extraPlaces: Place[];
   extraRoutes: Record<string, Route>;
   extraFacilities: Facility[];
+  areaTraffic: TrafficFlow[];
   origin: { lat: number; lng: number };
   originLabel: string;
   gps: GpsFix | null;
@@ -151,6 +154,7 @@ type AppState = {
   setGpsStatus: (s: GpsStatus) => void;
   setOriginLabel: (label: string) => void;
   setExtraFacilities: (list: Facility[]) => void;
+  setAreaTraffic: (list: TrafficFlow[]) => void;
   startNav: () => void;
   stopNav: () => void;
   tick: (dtSec: number) => void;
@@ -178,6 +182,7 @@ export const useApp = create<AppState>()(
       extraPlaces: [],
       extraRoutes: {},
       extraFacilities: [],
+      areaTraffic: [],
       origin: ORIGIN,
       originLabel: HOME_LABEL,
       gps: null,
@@ -218,6 +223,10 @@ export const useApp = create<AppState>()(
           convoy: seedConvoy(coord),
           nav: { ...DEFAULT_NAV, follow: true },
           selectedFacilityId: null,
+          areaTraffic: [],
+        });
+        void fetchAreaTraffic(coord, getReports()).then((flows) => {
+          if (flows.length) get().setAreaTraffic(flows);
         });
       },
 
@@ -287,6 +296,7 @@ export const useApp = create<AppState>()(
       setGpsStatus: (gpsStatus) => set({ gpsStatus }),
       setOriginLabel: (originLabel) => set({ originLabel }),
       setExtraFacilities: (extraFacilities) => set({ extraFacilities }),
+      setAreaTraffic: (areaTraffic) => set({ areaTraffic }),
 
       previewDestination: (placeId) => {
         const routeId = ROUTE_BY_DEST[placeId];

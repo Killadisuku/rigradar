@@ -1,7 +1,8 @@
 import { haversine } from "./geo";
 import { fetchNearbyStops } from "./overpass";
 import { reverseGeocode } from "./routing";
-import { useApp } from "./store";
+import { getReports, useApp } from "./store";
+import { fetchAreaTraffic } from "./traffic";
 import type { LatLng } from "./types";
 
 let watchId: number | null = null;
@@ -9,18 +10,36 @@ let lastLabelAt = 0;
 let lastLabel: LatLng = { lat: 0, lng: 0 };
 let lastStopsAt = 0;
 let lastStops: LatLng = { lat: 0, lng: 0 };
+let lastTrafficAt = 0;
+let lastTraffic: LatLng = { lat: 0, lng: 0 };
 let labelAbort: AbortController | null = null;
 let stopsAbort: AbortController | null = null;
+let trafficAbort: AbortController | null = null;
+let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function startGps() {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
     useApp.getState().setGpsStatus("denied");
+    const origin = useApp.getState().origin;
+    void maybeTraffic(origin);
+    void maybeStops(origin);
     return;
   }
   if (watchId != null) return;
   useApp.getState().setGpsStatus("pending");
+  fallbackTimer = setTimeout(() => {
+    if (!useApp.getState().gps) {
+      const origin = useApp.getState().origin;
+      void maybeTraffic(origin);
+      void maybeStops(origin);
+    }
+  }, 3500);
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
+      if (fallbackTimer != null) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
       const c = pos.coords;
       const coord = { lat: c.latitude, lng: c.longitude };
       const heading = c.heading == null || Number.isNaN(Number(c.heading)) ? -1 : Number(c.heading);
@@ -34,9 +53,11 @@ export function startGps() {
       });
       void maybeLabel(coord);
       void maybeStops(coord);
+      void maybeTraffic(coord);
     },
     (err) => {
       useApp.getState().setGpsStatus(err.code === 1 ? "denied" : "pending");
+      void maybeTraffic(useApp.getState().origin);
     },
     { enableHighAccuracy: true, maximumAge: 1200, timeout: 20000 },
   );
@@ -47,8 +68,13 @@ export function stopGps() {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
   }
+  if (fallbackTimer != null) {
+    clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  }
   labelAbort?.abort();
   stopsAbort?.abort();
+  trafficAbort?.abort();
 }
 
 async function maybeLabel(coord: LatLng) {
@@ -80,5 +106,21 @@ async function maybeStops(coord: LatLng) {
     if (!ac.signal.aborted) useApp.getState().setExtraFacilities(stops);
   } catch {
     /* keep last stops */
+  }
+}
+
+async function maybeTraffic(coord: LatLng) {
+  const moved = haversine(lastTraffic, coord);
+  if (Date.now() - lastTrafficAt < 50000 && moved < 1.2) return;
+  lastTrafficAt = Date.now();
+  lastTraffic = coord;
+  trafficAbort?.abort();
+  const ac = new AbortController();
+  trafficAbort = ac;
+  try {
+    const flows = await fetchAreaTraffic(coord, getReports(), ac.signal);
+    if (!ac.signal.aborted && flows.length) useApp.getState().setAreaTraffic(flows);
+  } catch {
+    /* keep last flows */
   }
 }
