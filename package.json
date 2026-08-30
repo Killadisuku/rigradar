@@ -23,6 +23,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@hookform/resolvers": "^5.7.0",
+    "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -60,6 +61,7 @@
     "kysely": "^0.28.5",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.510.0",
+    "maplibre-gl": "^6.6.0",
     "pg": "^8.16.3",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { Circle, LayerGroup, Map as LeafletMap, Marker, Polyline, TileLayer } from "leaflet";
+import type { Circle, LayerGroup, Map as LeafletMap, Marker, Polyline } from "leaflet";
 import { FACILITIES, REPORT_META } from "@/lib/data";
 import { haversine, slicePath } from "@/lib/geo";
+import { applyEnglishLabels, loadEnglishBasemap } from "@/lib/map-style";
 import {
   getReports,
   resolveRoute,
@@ -9,8 +10,7 @@ import {
 } from "@/lib/store";
 import { pointAlong } from "@/lib/geo";
 
-const ESRI_STREET = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
-const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const FALLBACK = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 
 type LNS = typeof import("leaflet");
 
@@ -87,11 +87,15 @@ export function MapCanvas() {
     let cancelled = false;
     let map: LeafletMap | null = null;
     let unsub: (() => void) | undefined;
-    let tiles: TileLayer | null = null;
+    let tilesReady = false;
 
     void (async () => {
-      const mod = await import("leaflet");
-      const L = ((mod as { default?: LNS }).default ?? (mod as unknown as LNS)) as LNS;
+      const [{ default: leafletMod }, glMod] = await Promise.all([
+        import("leaflet"),
+        import("@maplibre/maplibre-gl-leaflet"),
+      ]);
+      const L = ((leafletMod as { default?: LNS }).default ?? (leafletMod as unknown as LNS)) as LNS;
+      const maplibreGL = glMod.default;
       if (cancelled || !rootRef.current) return;
 
       await new Promise<void>((resolve) => {
@@ -115,18 +119,28 @@ export function MapCanvas() {
       });
       rootRef.current.classList.toggle("is-night", useApp.getState().nightMap);
 
-      const street = L.tileLayer(ESRI_STREET, {
-        maxZoom: 19,
-        maxNativeZoom: 16,
-      });
-      let fellBack = false;
-      street.on("tileerror", () => {
-        if (fellBack || !map) return;
-        fellBack = true;
-        street.remove();
-        tiles = L.tileLayer(OSM, { maxZoom: 19, maxNativeZoom: 19 }).addTo(map);
-      });
-      tiles = street.addTo(map);
+      let glLayer: ReturnType<typeof maplibreGL> | null = null;
+      const paintEnglish = (layer: NonNullable<typeof glLayer>) => {
+        const ml = layer.getMaplibreMap();
+        const apply = () => applyEnglishLabels(ml);
+        ml.on("load", apply);
+        ml.on("style.load", apply);
+        if (ml.loaded()) apply();
+      };
+      try {
+        const style = await loadEnglishBasemap(useApp.getState().nightMap);
+        if (cancelled || !map) return;
+        glLayer = maplibreGL({
+          style,
+          interactive: false,
+          attributionControl: false,
+        }).addTo(map);
+        paintEnglish(glLayer);
+      } catch {
+        if (cancelled || !map) return;
+        L.tileLayer(FALLBACK, { maxZoom: 16, maxNativeZoom: 16 }).addTo(map);
+      }
+      tilesReady = true;
 
       const routeCasing: Polyline = L.polyline([], {
         color: "#06221e",
@@ -179,11 +193,22 @@ export function MapCanvas() {
       let lastPoiKey = "";
       let lastReportKey = "";
       let fittedRoute: string | null = null;
+      let lastNight = useApp.getState().nightMap;
 
       const apply = (s: ReturnType<typeof useApp.getState>) => {
-        if (!map || !tiles) return;
+        if (!map || !tilesReady) return;
 
         map.getContainer().classList.toggle("is-night", s.nightMap);
+        if (s.nightMap !== lastNight) {
+          lastNight = s.nightMap;
+          if (glLayer) {
+            void loadEnglishBasemap(s.nightMap)
+              .then((style) => glLayer?.getMaplibreMap().setStyle(style))
+              .catch(() => {
+                /* keep current basemap */
+              });
+          }
+        }
 
         const originKey = `${s.origin.lat.toFixed(3)},${s.origin.lng.toFixed(3)}`;
         if (originKey !== lastOriginKey) {
@@ -255,7 +280,7 @@ export function MapCanvas() {
         accuracy.setRadius(Math.max(18, Math.min(240, s.gps?.accuracyM ?? 40)));
 
         if (s.nav.follow && !s.nav.preview) {
-          const z = Math.max(map.getZoom(), s.gps ? 14 : 12);
+          const z = Math.max(map.getZoom(), s.gps ? 15 : 13);
           quietMove = true;
           map.setView([pos.pos.lat, pos.pos.lng], z, { animate: false });
           quietMove = false;

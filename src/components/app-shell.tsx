@@ -57,7 +57,7 @@ export function AppShell() {
         <MapCanvas />
       </div>
       <p className="pointer-events-none absolute bottom-36 left-3 z-10 text-xs text-muted-foreground md:bottom-4">
-        © Esri
+        © OpenStreetMap
       </p>
       <Hud />
       {client ? (

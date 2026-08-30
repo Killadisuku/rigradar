@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "leaflet/dist/leaflet.css";
+@import "maplibre-gl/dist/maplibre-gl.css";
 
 @theme {
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
@@ -149,15 +149,18 @@
   transform: translateZ(0);
 }
 
-.leaflet-container.is-night .leaflet-tile-pane {
-  filter: brightness(0.72) saturate(0.62) contrast(1.08);
+.leaflet-container.is-night {
+  background: #121418;
 }
 
 .leaflet-container:not(.is-night) {
   background: #cfd4da;
 }
 
-.leaflet-control-attribution {
+.leaflet-control-attribution,
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-bottom-right,
+.maplibregl-ctrl-bottom-left {
   display: none;
 }
 
